@@ -290,3 +290,34 @@ def cancel_job(job_id: str) -> dict:
     # If it's a lossless job or already finished
     _update_job(job_id, status="failed", message="Cancelled by user")
     return {"ok": True, "message": "Job marked as cancelled"}
+
+
+@app.post("/api/v1/preview")
+async def preview_akp(file: UploadFile = File(...)):
+    """Restores an .akp file on the server and returns a URL to stream the video."""
+    work = tempfile.mkdtemp()
+    arc_path = os.path.join(work, "input.akp")
+    with open(arc_path, "wb") as f:
+        while chunk := await file.read(1 << 20):
+            f.write(chunk)
+    
+    preview_id = uuid.uuid4().hex
+    out_path = os.path.join(STORAGE, f"preview_{preview_id}.mp4")
+    
+    try:
+        # Restore to an mp4 file in storage
+        restore_file(arc_path, out_path)
+        return {"preview_url": f"/api/v1/preview/{preview_id}"}
+    except Exception as e:
+        raise HTTPException(400, f"Failed to restore video: {str(e)}")
+    finally:
+        try: os.unlink(arc_path)
+        except OSError: pass
+
+@app.get("/api/v1/preview/{preview_id}")
+def serve_preview(preview_id: str):
+    """Serves the restored video for the <video> tag."""
+    out_path = os.path.join(STORAGE, f"preview_{preview_id}.mp4")
+    if not os.path.exists(out_path):
+        raise HTTPException(404, "Preview not found")
+    return FileResponse(out_path, media_type="video/mp4")

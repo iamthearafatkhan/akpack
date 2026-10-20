@@ -6,26 +6,10 @@ import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import FAQ from "./pages/FAQ";
 import Privacy from "./pages/Privacy";
-import Loader from "./components/Loader";
 
-type Analysis = {
-    category: string;
-    recommended_mode: "lossless" | "transcode";
-    reason: string;
-    lossless_expected_pct: number;
-    transcode_expected_pct: number | null;
-    duration_s?: number | null;
-    codec?: string | null;
-};
-type JobResult = {
-    archive_id: string;
-    mode: "lossless" | "transcode";
-    orig_size: number;
-    compressed_size: number;
-    savings_pct: number;
-    download_url: string;
-    warning?: string;
-};
+type Analysis = { category: string; recommended_mode: "lossless" | "transcode"; reason: string; lossless_expected_pct: number; transcode_expected_pct: number | null; duration_s?: number | null; codec?: string | null; };
+type JobResult = { archive_id: string; mode: "lossless" | "transcode"; orig_size: number; compressed_size: number; savings_pct: number; download_url: string; warning?: string; };
+
 function formatBytes(n: number): string {
     if (n < 1024) return `${n} B`;
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -33,11 +17,8 @@ function formatBytes(n: number): string {
     return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 function suggestedFilename(original: string, mode: "lossless" | "transcode"): string {
-    if (mode === "transcode") {
-        const base = original.replace(/\.[^.]+$/, "");
-        return `${base}.av1.mp4`;
-    }
-    return `${original}.akp`; // Always appends .akp for lossless
+    if (mode === "transcode") return `${original.replace(/\.[^.]+$/, "")}.av1.mp4`;
+    return `${original}.akp`;
 }
 async function saveToDevice(url: string, filename: string, onProgress?: (loaded: number, total: number) => void): Promise<boolean> {
     if ("showSaveFilePicker" in window) {
@@ -45,34 +26,42 @@ async function saveToDevice(url: string, filename: string, onProgress?: (loaded:
             const handle = await (window as any).showSaveFilePicker({ suggestedName: filename });
             const writable = await handle.createWritable();
             const resp = await fetch(url);
-            if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
+            if (!resp.ok) throw new Error(`Download failed`);
             const total = parseInt(resp.headers.get("content-length") || "0", 10);
-            let loaded = 0;
-            const reader = resp.body?.getReader();
-            if (!reader) throw new Error("No response body");
+            let loaded = 0; const reader = resp.body?.getReader();
+            if (!reader) throw new Error("No body");
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                await writable.write(value);
-                loaded += value.length;
+                await writable.write(value); loaded += value.length;
                 onProgress?.(loaded, total);
             }
-            await writable.close();
-            return true;
-        } catch (e: any) {
-            if (e.name === "AbortError") return false;
-        }
+            await writable.close(); return true;
+        } catch (e: any) { if (e.name === "AbortError") return false; }
     }
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    return true;
+    const a = document.createElement("a"); a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); return true;
+}
+
+// NEW REDESIGNED SPINNER (No Loader.tsx needed)
+function Spinner({ text }: { text: string }) {
+    return (
+        <div className="flex flex-col items-center justify-center py-6 space-y-4">
+            <div className="relative flex items-center justify-center w-14 h-14">
+                {/* Dark Background Ring */}
+                <div className="absolute inset-0 rounded-full border-4 border-[#2d4a37]"></div>
+                {/* Bright Green Spinning Arc */}
+                <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#a3e635] border-r-[#a3e635] animate-spin" style={{ animationDuration: '1s' }}></div>
+            </div>
+            <p className="text-sm font-bold text-[#a3e635] tracking-widest uppercase animate-pulse">{text}</p>
+        </div>
+    );
 }
 
 function Home() {
+    const [activeTab, setActiveTab] = useState<"compress" | "restore" | "watch">("compress");
+
+    // COMPRESS STATE
     const [file, setFile] = useState<File | null>(null);
     const [analysis, setAnalysis] = useState<Analysis | null>(null);
     const [analyzing, setAnalyzing] = useState(false);
@@ -87,6 +76,21 @@ function Home() {
     const [downloading, setDownloading] = useState(false);
     const [downloadPct, setDownloadPct] = useState(0);
 
+    // RESTORE STATE
+    const [restoreFile, setRestoreFile] = useState<File | null>(null);
+    const [restoring, setRestoring] = useState(false);
+    const [restoreError, setRestoreError] = useState<string | null>(null);
+
+    // WATCH STATE
+    const [watchFile, setWatchFile] = useState<File | null>(null);
+    const [watching, setWatching] = useState(false);
+    const [videoUrl, setVideoUrl] = useState<string | null>(null);
+    const [watchError, setWatchError] = useState<string | null>(null);
+
+    // SUBTITLE STATE
+    const [subtitleUrl, setSubtitleUrl] = useState<string | null>(null);
+    const [transcribing, setTranscribing] = useState(false);
+
     useEffect(() => {
         fetch(`${API}/health`).then(r => r.json()).then(h => setFfmpegAvailable(h.ffmpeg === true)).catch(() => setFfmpegAvailable(false));
     }, []);
@@ -99,234 +103,255 @@ function Home() {
             const fd = new FormData(); fd.append("file", f);
             const r = await fetch(`${API}/api/v1/analyze`, { method: "POST", body: fd });
             if (!r.ok) throw new Error(await r.text());
-            const a: Analysis = await r.json();
-            setAnalysis(a); setMode(a.recommended_mode);
+            const a: Analysis = await r.json(); setAnalysis(a); setMode(a.recommended_mode);
         } catch (e: any) { setError("Analysis failed: " + e.message); }
         finally { setAnalyzing(false); }
     }
 
     async function startJob() {
         if (!file) return;
-        const currentFile = file;
         setBusy(true); setError(null); setResult(null); setProgress(0); setDownloaded(false); setDownloadPct(0);
         try {
-            const fd = new FormData(); fd.append("file", currentFile); fd.append("mode", mode);
+            const fd = new FormData(); fd.append("file", file); fd.append("mode", mode);
             const r = await fetch(`${API}/api/v1/compress`, { method: "POST", body: fd });
             if (!r.ok) throw new Error(await r.text());
             const { job_id } = await r.json();
 
-            // Pass job_id directly to pollJob to avoid React state delay bugs
-            await pollJob(job_id, currentFile);
+            while (true) {
+                const jr = await fetch(`${API}/api/v1/jobs/${job_id}`);
+                const j = await jr.json(); setProgress(j.progress || 0);
+                if (j.status === "completed") {
+                    setResult(j.result); setBusy(false);
+                    if (autoDownload && j.result) await doDownload(j.result, file);
+                    break;
+                }
+                if (j.status === "failed") { setError("Failed: " + (j.message || "cancelled")); setBusy(false); break; }
+                await new Promise(res => setTimeout(res, 300));
+            }
         } catch (e: any) { setError(e.message); setBusy(false); }
     }
 
-    async function cancelJob() {
-        // We don't need to manually track jobId in state anymore for polling,
-        // but we do need it to send the cancel request.
-        setBusy(false);
-        setError("Job cancelled.");
-        // The pollJob loop will break when the server reports "failed"
-    }
-
-    async function pollJob(id: string, sourceFile: File) {
-        while (true) {
-            const r = await fetch(`${API}/api/v1/jobs/${id}`);
-            if (!r.ok) { setError("Job lookup failed"); setBusy(false); return; }
-            const j = await r.json();
-            setProgress(j.progress || 0);
-
-            if (j.status === "completed") {
-                setResult(j.result); setBusy(false);
-                if (autoDownload && j.result) await doDownload(j.result, sourceFile);
-                return;
-            }
-            if (j.status === "failed") {
-                setError("Processing failed: " + (j.message || "cancelled"));
-                setBusy(false); return;
-            }
-            await new Promise(res => setTimeout(res, 500)); // Poll every 500ms for faster feedback
-        }
-    }
-
     async function doDownload(r: JobResult, sourceFile?: File) {
-        const targetFile = sourceFile ?? file;
-        if (!targetFile) return;
+        const targetFile = sourceFile ?? file; if (!targetFile) return;
         setDownloading(true); setDownloadPct(0);
         try {
             const filename = suggestedFilename(targetFile.name, r.mode);
-            const ok = await saveToDevice(`${API}${r.download_url}`, filename, (loaded, total) => {
-                if (total > 0) setDownloadPct(Math.round((100 * loaded) / total));
-            });
+            const ok = await saveToDevice(`${API}${r.download_url}`, filename, (l, t) => { if (t > 0) setDownloadPct(Math.round((100 * l) / t)); });
             if (ok) setDownloaded(true);
-        } catch (e: any) { setError("Download failed: " + e.message); }
-        finally { setDownloading(false); }
+        } catch (e: any) { setError("Download failed: " + e.message); } finally { setDownloading(false); }
     }
 
-    const transcodeDisabled = mode === "transcode" && ffmpegAvailable === false;
+    async function handleRestore() {
+        if (!restoreFile) return; setRestoring(true); setRestoreError(null);
+        try {
+            const fd = new FormData(); fd.append("file", restoreFile);
+            const r = await fetch(`${API}/api/v1/restore`, { method: "POST", body: fd });
+            if (!r.ok) throw new Error(await r.text());
+            const blob = await r.blob(); const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a"); a.href = url; a.download = restoreFile.name.replace(/\.akp$/, "");
+            document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url);
+        } catch (e: any) { setRestoreError(e.message || "Failed to restore."); } finally { setRestoring(false); }
+    }
+
+    async function handleWatch() {
+        if (!watchFile) return;
+        setWatching(true); setWatchError(null); setVideoUrl(null); setSubtitleUrl(null);
+        try {
+            const fd = new FormData(); fd.append("file", watchFile);
+            const r = await fetch(`${API}/api/v1/preview`, { method: "POST", body: fd });
+            if (!r.ok) throw new Error(await r.text());
+            const data = await r.json();
+            setVideoUrl(`${API}${data.preview_url}`);
+        } catch (e: any) { setWatchError(e.message || "Failed to preview."); } finally { setWatching(false); }
+    }
+
+    async function handleTranscribe() {
+        if (!videoUrl) return;
+        setTranscribing(true);
+        try {
+            const previewId = videoUrl.split("/").pop();
+            const r = await fetch(`${API}/api/v1/transcribe/${previewId}`, { method: "POST" });
+            if (!r.ok) throw new Error(await r.text());
+            const data = await r.json();
+            setSubtitleUrl(`${API}${data.vtt_url}`);
+        } catch (e: any) {
+            alert("Subtitle generation failed: " + e.message);
+        } finally {
+            setTranscribing(false);
+        }
+    }
 
     return (
-        <div className="min-h-screen bg-white dark:bg-[#0a1610] text-gray-900 dark:text-[#e5eedb] transition-colors duration-300">
+        <div className="min-h-screen bg-[#0a1610] text-[#e5eedb] flex flex-col transition-colors duration-300">
             <Navbar />
 
-            <motion.div
-                initial="hidden" animate="visible"
-                variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.2 } } }}
-                className="max-w-3xl mx-auto text-center px-6 pt-20 pb-12"
-            >
-                <motion.div variants={{ hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: "easeOut" } } }}>
-                    <span className="inline-block py-1 px-3 rounded-full bg-[#e5eedb] dark:bg-[#152219] text-[#4d7c0f] dark:text-[#a3e635] text-xs font-bold tracking-widest uppercase mb-6 border border-[#a3e635]/30 shadow-sm">
-                        v1.0 is live
-                    </span>
-                </motion.div>
-
-                <motion.h1
-                    variants={{ hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: "easeOut" } } }}
-                    className="text-4xl md:text-6xl font-extrabold tracking-tight mb-6"
-                >
-                    Compress files.<br />
-                    <span className="text-[#4d7c0f] dark:text-[#a3e635]">Keep the quality.</span>
-                </motion.h1>
-
-                <motion.p
-                    variants={{ hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: "easeOut" } } }}
-                    className="text-gray-600 dark:text-[#8fa896] text-lg max-w-xl mx-auto leading-relaxed"
-                >
-                    Lossless compression for exact byte restoration, or AV1 transcoding for 50% smaller video. No lies, no hidden quality drops.
-                </motion.p>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto text-center px-6 pt-16 pb-10">
+                <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">
+                    Compress. <span className="text-[#a3e635]">Restore.</span> Watch.
+                </h1>
+                <p className="text-[#8fa896] text-lg max-w-xl mx-auto">
+                    Lossless compression for exact byte restoration, or AV1 transcoding for 50% smaller video.
+                </p>
             </motion.div>
 
-            <div className="max-w-2xl mx-auto px-6 pb-12 relative z-10">
-                <div className="bg-gray-50 dark:bg-[#152219] border border-gray-200 dark:border-[#2d4a37] rounded-2xl p-6 space-y-5 shadow-xl shadow-gray-200/50 dark:shadow-black/30 transition-colors">
-                    <label className="block">
-                        <span className="text-xs uppercase tracking-wider text-gray-500 dark:text-[#8fa896] mb-2 block">Choose a file</span>
-                        <input type="file" onChange={e => onSelectFile(e.target.files?.[0] ?? null)}
-                            className="block w-full text-sm text-gray-600 dark:text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors"
-                        />
-                        {file && !analyzing && (
-                            <div className="text-xs text-gray-500 dark:text-[#8fa896] mt-3 flex flex-col gap-1">
-                                <span><span className="text-gray-900 dark:text-[#c8d6be] font-medium">{file.name}</span> · {formatBytes(file.size)}</span>
-                                <span className="text-[#4d7c0f] dark:text-[#a3e635]">Output: {suggestedFilename(file.name, mode)}</span>
-                            </div>
-                        )}
-                    </label>
+            <div className="flex-1 w-full max-w-5xl mx-auto px-6 pb-12">
 
-                    {analyzing && <Loader text="Analyzing file" />}
-
-                    {analysis && (
-                        <div className="bg-white dark:bg-[#1f3326] border border-gray-200 dark:border-[#2d4a37] rounded-xl p-4 space-y-4 shadow-sm transition-colors">
-                            <div className="flex items-start gap-2">
-                                <span className="px-2 py-0.5 rounded-md bg-gray-100 dark:bg-[#2d4a37] text-[#4d7c0f] dark:text-[#a3e635] text-[10px] font-semibold uppercase">{analysis.category}</span>
-                                {analysis.codec && <span className="px-2 py-0.5 rounded-md bg-gray-100 dark:bg-[#2d4a37] text-[#4d7c0f] dark:text-[#a3e635] text-[10px] font-semibold uppercase">{analysis.codec}</span>}
-                            </div>
-                            <p className="text-sm text-gray-700 dark:text-[#c8d6be]">{analysis.reason}</p>
-                            <div className="grid grid-cols-2 gap-3">
-                                <button onClick={() => setMode("lossless")}
-                                    className={`p-3 rounded-xl text-left transition-all ${mode === "lossless" ? "bg-[#4d7c0f] border-2 border-[#a3e635] text-white shadow-lg shadow-[#4d7c0f]/30" : "bg-gray-50 dark:bg-[#152219] border-2 border-gray-200 dark:border-[#2d4a37] text-gray-600 dark:text-[#c8d6be] hover:border-[#4d7c0f]"}`}
-                                >
-                                    <div className="font-semibold text-sm">Lossless</div>
-                                    <div className="text-xs opacity-85 mt-0.5">~{analysis.lossless_expected_pct.toFixed(0)}% savings</div>
-                                </button>
-                                {analysis.transcode_expected_pct !== null && (
-                                    ffmpegAvailable === false ? (
-                                        <div className="p-3 rounded-xl bg-gray-50 dark:bg-[#152219] border-2 border-gray-200 dark:border-[#2d4a37] opacity-60">
-                                            <div className="font-semibold text-sm text-gray-400 dark:text-[#8fa896]">AV1 (lossy)</div>
-                                            <div className="text-xs text-gray-400 dark:text-[#8fa896] mt-0.5">Server has no FFmpeg</div>
-                                        </div>
-                                    ) : (
-                                        <button onClick={() => setMode("transcode")}
-                                            className={`p-3 rounded-xl text-left transition-all ${mode === "transcode" ? "bg-[#65a30d] border-2 border-[#a3e635] text-white shadow-lg shadow-[#65a30d]/30" : "bg-gray-50 dark:bg-[#152219] border-2 border-gray-200 dark:border-[#2d4a37] text-gray-600 dark:text-[#c8d6be] hover:border-[#65a30d]"}`}
-                                        >
-                                            <div className="font-semibold text-sm">AV1 (lossy)</div>
-                                            <div className="text-xs opacity-85 mt-0.5">~{analysis.transcode_expected_pct.toFixed(0)}% savings</div>
-                                        </button>
-                                    )
-                                )}
-                            </div>
-                            {mode === "transcode" && analysis.duration_s && (
-                                <div className="flex gap-2 text-xs text-[#d97706] dark:text-[#fbbf24] bg-orange-50 dark:bg-[#2a1a08] border border-orange-200 dark:border-[#4a2c10] rounded-lg p-2.5">
-                                    <span>⏱</span><span>Encoding takes ~{Math.max(1, Math.round(analysis.duration_s / 30))} min on CPU.</span>
-                                </div>
-                            )}
-                            <label className="flex items-start gap-3 cursor-pointer pt-3 border-t border-gray-200 dark:border-[#2d4a37]">
-                                <input type="checkbox" checked={autoDownload} onChange={e => setAutoDownload(e.target.checked)} className="mt-1 w-4 h-4 accent-[#84cc16] cursor-pointer" />
-                                <div>
-                                    <div className="text-sm text-gray-900 dark:text-[#c8d6be] font-medium">Download automatically when done</div>
-                                    <div className="text-xs text-gray-500 dark:text-[#8fa896]">Your browser will ask where to save the file.</div>
-                                </div>
-                            </label>
-                        </div>
-                    )}
-
-                    <div className="flex gap-3">
-                        <button onClick={startJob} disabled={!file || busy || analyzing || transcodeDisabled}
-                            className="flex-1 py-3.5 rounded-xl bg-[#84cc16] hover:bg-[#a3e635] disabled:bg-gray-300 dark:disabled:bg-[#2d4a37] disabled:text-gray-500 dark:disabled:text-[#5a7565] text-[#0a1610] font-bold text-sm tracking-wide transition-all disabled:cursor-not-allowed shadow-lg shadow-[#84cc16]/20 disabled:shadow-none"
-                        >
-                            {busy ? `Processing… ${progress.toFixed(0)}%` : `Start ${mode === "lossless" ? "compression" : "transcode"}`}
-                        </button>
-                        {busy && (
-                            <button onClick={cancelJob}
-                                className="px-6 py-3.5 rounded-xl bg-red-100 dark:bg-red-900/40 border border-red-300 dark:border-red-800 hover:bg-red-200 dark:hover:bg-red-900/60 text-red-600 dark:text-red-300 font-bold text-sm transition-all"
-                            >
-                                Cancel
-                            </button>
-                        )}
+                <div className="flex justify-center mb-6">
+                    <div className="inline-flex bg-[#152219] rounded-lg p-1 border border-[#2d4a37]">
+                        <button onClick={() => setActiveTab("compress")} className={`px-6 py-2 rounded-md text-sm font-semibold transition-all ${activeTab === "compress" ? "bg-[#2d4a37] text-white shadow-sm" : "text-[#8fa896] hover:text-white"}`}>Compress</button>
+                        <button onClick={() => setActiveTab("restore")} className={`px-6 py-2 rounded-md text-sm font-semibold transition-all ${activeTab === "restore" ? "bg-[#2d4a37] text-white shadow-sm" : "text-[#8fa896] hover:text-white"}`}>Restore</button>
+                        <button onClick={() => setActiveTab("watch")} className={`px-6 py-2 rounded-md text-sm font-semibold transition-all ${activeTab === "watch" ? "bg-[#2d4a37] text-white shadow-sm" : "text-[#8fa896] hover:text-white"}`}>Watch</button>
                     </div>
-
-                    {busy && (
-                        <div className="space-y-2">
-                            <Loader text={mode === "transcode" ? "Encoding AV1" : "Compressing"} />
-                            <div className="w-full h-2.5 bg-gray-200 dark:bg-[#0a1610] rounded-full overflow-hidden border border-gray-300 dark:border-[#2d4a37]">
-                                <div className="h-full bg-gradient-to-r from-[#4d7c0f] via-[#84cc16] to-[#a3e635] transition-all duration-300 rounded-full" style={{ width: `${progress}%` }} />
-                            </div>
-                        </div>
-                    )}
-
-                    {downloading && (
-                        <div className="space-y-2">
-                            <div className="w-full h-2 bg-gray-200 dark:bg-[#0a1610] rounded-full overflow-hidden border border-gray-300 dark:border-[#2d4a37]">
-                                <div className="h-full bg-gradient-to-r from-[#4d7c0f] to-[#a3e635] transition-all" style={{ width: `${downloadPct}%` }} />
-                            </div>
-                            <p className="text-xs text-gray-500 dark:text-[#8fa896] text-center">Saving to your device… {downloadPct > 0 ? `${downloadPct}%` : ""}</p>
-                        </div>
-                    )}
-
-                    {error && <div className="bg-red-50 dark:bg-[#2a0a0a] border border-red-200 dark:border-[#7f1d1d] rounded-lg p-3"><p className="text-sm text-red-600 dark:text-[#fca5a5] break-words">{error}</p></div>}
-
-                    {result && (
-                        <div className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-[#142a10] dark:to-[#1f3326] border border-green-200 dark:border-[#4d7c0f] rounded-xl p-4 space-y-3">
-                            <div className="flex items-center justify-between">
-                                <p className="text-sm font-semibold text-[#4d7c0f] dark:text-[#a3e635] flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-[#84cc16] dark:bg-[#4d7c0f] flex items-center justify-center text-xs text-white">✓</span>{result.savings_pct.toFixed(1)}% smaller</p>
-                                {downloaded && <span className="text-[10px] text-[#4d7c0f] dark:text-[#a3e635] bg-[#a3e635]/20 dark:bg-[#4d7c0f]/40 px-2 py-1 rounded-md font-medium uppercase tracking-wider">Saved</span>}
-                            </div>
-                            <div className="text-xs text-gray-600 dark:text-[#8fa896] space-y-1">
-                                <div className="flex justify-between"><span>Original</span><span className="text-gray-900 dark:text-[#c8d6be] font-mono">{formatBytes(result.orig_size)}</span></div>
-                                <div className="flex justify-between"><span>Output</span><span className="text-[#4d7c0f] dark:text-[#a3e635] font-mono">{formatBytes(result.compressed_size)}</span></div>
-                            </div>
-                            {result.warning && <p className="text-xs text-[#d97706] dark:text-[#fbbf24] bg-orange-100 dark:bg-[#2a1a08] border border-orange-200 dark:border-[#4a2c10] rounded p-2">⚠ {result.warning}</p>}
-                            <div className="flex gap-2 pt-1">
-                                <button onClick={() => doDownload(result)} disabled={downloading}
-                                    className="flex-1 px-4 py-2.5 rounded-lg bg-[#4d7c0f] hover:bg-[#65a30d] disabled:opacity-50 text-white text-sm font-semibold transition-colors"
-                                >
-                                    {downloaded ? "Save again" : "Save to device"}
-                                </button>
-                            </div>
-                            {result.mode === "transcode" && (
-                                <div className="pt-2 border-t border-gray-200 dark:border-[#2d4a37]">
-                                    <p className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-[#8fa896] mb-2">Preview</p>
-                                    <video controls preload="metadata" src={`${API}${result.download_url}`} className="w-full rounded-lg border border-gray-300 dark:border-[#2d4a37] bg-black" />
-                                </div>
-                            )}
-                        </div>
-                    )}
                 </div>
 
-                <div className="mt-8 bg-gray-50 dark:bg-[#152219]/50 border border-gray-300 dark:border-[#2d4a37] border-dashed rounded-2xl p-6 text-center transition-colors">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-[#e5eedb] mb-2">Need AV1 but using the free live web version?</h3>
-                    <p className="text-xs text-gray-500 dark:text-[#8fa896] mb-4 max-w-md mx-auto">Cloud servers don't have the CPU for heavy video encoding. Download the free open-source CLI to transcode videos on your own laptop.</p>
-                    <a href="https://github.com/iamthearafatkhan/akpack" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-gray-200 dark:bg-[#2d4a37] hover:bg-[#4d7c0f] dark:hover:bg-[#4d7c0f] text-gray-900 dark:text-white text-sm font-semibold transition-colors">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.9 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6A12 12 0 0 0 12 .3z" /></svg>
-                        Download CLI via GitHub
-                    </a>
+                <div className="max-w-2xl mx-auto bg-[#152219] border border-[#2d4a37] rounded-2xl p-6 shadow-xl shadow-black/30 transition-colors">
+
+                    {activeTab === "compress" && (
+                        <div className="space-y-5">
+                            <label className="block">
+                                <span className="text-xs uppercase tracking-wider text-[#8fa896] mb-2 block">Choose a file to compress</span>
+                                <input type="file" onChange={e => onSelectFile(e.target.files?.[0] ?? null)} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
+                                {file && !analyzing && (
+                                    <div className="text-xs text-[#8fa896] mt-3 flex flex-col gap-1">
+                                        <span><span className="text-[#c8d6be] font-medium">{file.name}</span> · {formatBytes(file.size)}</span>
+                                        <span className="text-[#a3e635]">Output: {suggestedFilename(file.name, mode)}</span>
+                                    </div>
+                                )}
+                            </label>
+
+                            {analyzing && <Spinner text="Analyzing file" />}
+
+                            {analysis && (
+                                <div className="bg-[#1f3326] border border-[#2d4a37] rounded-xl p-4 space-y-4 shadow-sm">
+                                    <div className="flex items-start gap-2">
+                                        <span className="px-2 py-0.5 rounded-md bg-[#2d4a37] text-[#a3e635] text-[10px] font-semibold uppercase">{analysis.category}</span>
+                                        {analysis.codec && <span className="px-2 py-0.5 rounded-md bg-[#2d4a37] text-[#a3e635] text-[10px] font-semibold uppercase">{analysis.codec}</span>}
+                                    </div>
+                                    <p className="text-sm text-[#c8d6be]">{analysis.reason}</p>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <button onClick={() => setMode("lossless")} className={`p-3 rounded-xl text-left transition-all ${mode === "lossless" ? "bg-[#4d7c0f] border-2 border-[#a3e635] text-white shadow-lg shadow-[#4d7c0f]/30" : "bg-[#152219] border-2 border-[#2d4a37] text-[#c8d6be] hover:border-[#4d7c0f]"}`}>
+                                            <div className="font-semibold text-sm">Lossless</div>
+                                            <div className="text-xs opacity-85 mt-0.5">~{analysis.lossless_expected_pct.toFixed(0)}% savings</div>
+                                        </button>
+                                        {analysis.transcode_expected_pct !== null && (
+                                            ffmpegAvailable === false ? (
+                                                <div className="p-3 rounded-xl bg-[#152219] border-2 border-[#2d4a37] opacity-60">
+                                                    <div className="font-semibold text-sm text-[#8fa896]">AV1 (lossy)</div>
+                                                    <div className="text-xs text-[#8fa896] mt-0.5">Server has no FFmpeg</div>
+                                                </div>
+                                            ) : (
+                                                <button onClick={() => setMode("transcode")} className={`p-3 rounded-xl text-left transition-all ${mode === "transcode" ? "bg-[#65a30d] border-2 border-[#a3e635] text-white shadow-lg shadow-[#65a30d]/30" : "bg-[#152219] border-2 border-[#2d4a37] text-[#c8d6be] hover:border-[#65a30d]"}`}>
+                                                    <div className="font-semibold text-sm">AV1 (lossy)</div>
+                                                    <div className="text-xs opacity-85 mt-0.5">~{analysis.transcode_expected_pct.toFixed(0)}% savings</div>
+                                                </button>
+                                            )
+                                        )}
+                                    </div>
+                                    <label className="flex items-start gap-3 cursor-pointer pt-3 border-t border-[#2d4a37]">
+                                        <input type="checkbox" checked={autoDownload} onChange={e => setAutoDownload(e.target.checked)} className="mt-1 w-4 h-4 accent-[#84cc16] cursor-pointer" />
+                                        <div>
+                                            <div className="text-sm text-[#c8d6be] font-medium">Download automatically when done</div>
+                                            <div className="text-xs text-[#8fa896]">Your browser will ask where to save the file.</div>
+                                        </div>
+                                    </label>
+                                </div>
+                            )}
+
+                            <button onClick={startJob} disabled={!file || busy || analyzing || (mode === "transcode" && ffmpegAvailable === false)} className="w-full py-3.5 rounded-xl bg-[#84cc16] hover:bg-[#a3e635] disabled:bg-[#2d4a37] disabled:text-[#5a7565] text-[#0a1610] font-bold text-sm tracking-wide transition-all disabled:cursor-not-allowed shadow-lg shadow-[#84cc16]/20 disabled:shadow-none">
+                                {busy ? `Processing… ${progress.toFixed(0)}%` : `Start ${mode === "lossless" ? "compression" : "transcode"}`}
+                            </button>
+
+                            {busy && (
+                                <div className="space-y-2">
+                                    <Spinner text={mode === "transcode" ? "Encoding AV1" : "Compressing"} />
+                                    <div className="w-full h-2.5 bg-[#0a1610] rounded-full overflow-hidden border border-[#2d4a37]">
+                                        <div className="h-full bg-gradient-to-r from-[#4d7c0f] via-[#84cc16] to-[#a3e635] transition-all duration-300 rounded-full" style={{ width: `${progress}%` }} />
+                                    </div>
+                                </div>
+                            )}
+
+                            {error && <div className="bg-[#2a0a0a] border border-[#7f1d1d] rounded-lg p-3"><p className="text-sm text-[#fca5a5] break-words">{error}</p></div>}
+
+                            {result && (
+                                <div className="bg-gradient-to-br from-[#142a10] to-[#1f3326] border border-[#4d7c0f] rounded-xl p-4 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-sm font-semibold text-[#a3e635] flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-[#4d7c0f] flex items-center justify-center text-xs text-white">✓</span>{result.savings_pct.toFixed(1)}% smaller</p>
+                                        {downloaded && <span className="text-[10px] text-[#a3e635] bg-[#4d7c0f]/40 px-2 py-1 rounded-md font-medium uppercase tracking-wider">Saved</span>}
+                                    </div>
+                                    <div className="text-xs text-[#8fa896] space-y-1">
+                                        <div className="flex justify-between"><span>Original</span><span className="text-[#c8d6be] font-mono">{formatBytes(result.orig_size)}</span></div>
+                                        <div className="flex justify-between"><span>Output</span><span className="text-[#a3e635] font-mono">{formatBytes(result.compressed_size)}</span></div>
+                                    </div>
+                                    <button onClick={() => doDownload(result)} disabled={downloading} className="w-full mt-2 px-4 py-2.5 rounded-lg bg-[#4d7c0f] hover:bg-[#65a30d] disabled:opacity-50 text-white text-sm font-semibold transition-colors">
+                                        {downloaded ? "Save again" : "Save to device"}
+                                    </button>
+                                </div>
+                            )}
+
+                            <div className="mt-6 bg-[#152219]/50 border border-[#2d4a37] border-dashed rounded-2xl p-5 text-center">
+                                <h3 className="text-sm font-semibold text-[#e5eedb] mb-1">Need AV1 but using the free live web version?</h3>
+                                <p className="text-xs text-[#8fa896] mb-3 max-w-md mx-auto">Cloud servers don't have the CPU for heavy video encoding. Download the free open-source CLI to transcode videos on your own laptop.</p>
+                                <a href="https://github.com/iamthearafatkhan/akpack" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2d4a37] hover:bg-[#4d7c0f] text-white text-sm font-semibold transition-colors">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.9 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6A12 12 0 0 0 12 .3z" /></svg>
+                                    Download CLI via GitHub
+                                </a>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === "restore" && (
+                        <div className="space-y-5">
+                            <label className="block">
+                                <span className="text-xs uppercase tracking-wider text-[#8fa896] mb-2 block">Upload an .akp file to restore</span>
+                                <input type="file" accept=".akp" onChange={e => setRestoreFile(e.target.files?.[0] ?? null)} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
+                                {restoreFile && <span className="text-xs text-[#8fa896] mt-3 block"><span className="text-[#c8d6be] font-medium">{restoreFile.name}</span> · {formatBytes(restoreFile.size)}</span>}
+                            </label>
+                            <button onClick={handleRestore} disabled={!restoreFile || restoring} className="w-full py-3.5 rounded-xl bg-[#84cc16] hover:bg-[#a3e635] disabled:bg-[#2d4a37] disabled:text-[#5a7565] text-[#0a1610] font-bold text-sm tracking-wide transition-all shadow-lg shadow-[#84cc16]/20">
+                                {restoring ? "Restoring..." : "Restore Original File"}
+                            </button>
+                            {restoreError && <div className="bg-[#2a0a0a] border border-[#7f1d1d] rounded-lg p-3"><p className="text-sm text-[#fca5a5] break-words">{restoreError}</p></div>}
+                        </div>
+                    )}
+
+                    {activeTab === "watch" && (
+                        <div className="space-y-5">
+                            <label className="block">
+                                <span className="text-xs uppercase tracking-wider text-[#8fa896] mb-2 block">Upload an .akp file to watch instantly</span>
+                                <input type="file" accept=".akp" onChange={e => { setWatchFile(e.target.files?.[0] ?? null); setVideoUrl(null); }} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
+                                {watchFile && <span className="text-xs text-[#8fa896] mt-3 block"><span className="text-[#c8d6be] font-medium">{watchFile.name}</span> · {formatBytes(watchFile.size)}</span>}
+                            </label>
+
+                            <button onClick={handleWatch} disabled={!watchFile || watching} className="w-full py-3.5 rounded-xl bg-[#84cc16] hover:bg-[#a3e635] disabled:bg-[#2d4a37] disabled:text-[#5a7565] text-[#0a1610] font-bold text-sm tracking-wide transition-all shadow-lg shadow-[#84cc16]/20">
+                                {watching ? "Extracting video..." : "Extract & Play Video"}
+                            </button>
+
+                            {watchError && <div className="bg-[#2a0a0a] border border-[#7f1d1d] rounded-lg p-3"><p className="text-sm text-[#fca5a5] break-words">{watchError}</p></div>}
+
+                            {/* NEW INLINE SPINNER FOR WATCH TAB */}
+                            {watching && <Spinner text="Restoring video stream..." />}
+
+                            {videoUrl && (
+                                <div className="mt-4 rounded-xl overflow-hidden border border-[#2d4a37] bg-black shadow-lg relative group">
+                                    <video src={videoUrl} controls autoPlay crossOrigin="anonymous" className="w-full max-h-[600px] object-contain">
+                                        {subtitleUrl && (
+                                            <track kind="subtitles" src={subtitleUrl} srcLang="en" label="English" default />
+                                        )}
+                                    </video>
+
+                                    <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button
+                                            onClick={handleTranscribe}
+                                            disabled={transcribing}
+                                            className="px-3 py-1.5 bg-black/70 hover:bg-black text-white text-xs font-medium rounded-lg border border-white/20 backdrop-blur-sm flex items-center gap-2 disabled:opacity-50"
+                                        >
+                                            <span>✨</span> {transcribing ? "Transcribing..." : "Generate AI Subtitles"}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                 </div>
             </div>
             <Footer />
