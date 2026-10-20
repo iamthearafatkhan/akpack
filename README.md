@@ -40,3 +40,4 @@ cp .env.example .env
 
 # Run the backend
 ./run.sh
+```
