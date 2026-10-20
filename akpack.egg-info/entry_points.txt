@@ -1,0 +1,2 @@
+[console_scripts]
+akp = cli.main:app

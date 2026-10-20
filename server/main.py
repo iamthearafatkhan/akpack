@@ -294,7 +294,6 @@ def cancel_job(job_id: str) -> dict:
 
 @app.post("/api/v1/preview")
 async def preview_akp(file: UploadFile = File(...)):
-    """Restores an .akp file on the server and returns a URL to stream the video."""
     work = tempfile.mkdtemp()
     arc_path = os.path.join(work, "input.akp")
     with open(arc_path, "wb") as f:
@@ -305,8 +304,8 @@ async def preview_akp(file: UploadFile = File(...)):
     out_path = os.path.join(STORAGE, f"preview_{preview_id}.mp4")
     
     try:
-        # Restore to an mp4 file in storage
-        restore_file(arc_path, out_path)
+        # PASS verify=False HERE TO MAKE IT FAST
+        restore_file(arc_path, out_path, verify=False)
         return {"preview_url": f"/api/v1/preview/{preview_id}"}
     except Exception as e:
         raise HTTPException(400, f"Failed to restore video: {str(e)}")
@@ -321,3 +320,27 @@ def serve_preview(preview_id: str):
     if not os.path.exists(out_path):
         raise HTTPException(404, "Preview not found")
     return FileResponse(out_path, media_type="video/mp4")
+from core.transcriber import generate_subtitles
+
+@app.post("/api/v1/transcribe/{preview_id}")
+async def transcribe_video(preview_id: str):
+    video_path = os.path.join(STORAGE, f"preview_{preview_id}.mp4")
+    if not os.path.exists(video_path):
+        raise HTTPException(404, "Video not found")
+    
+    vtt_path = os.path.join(STORAGE, f"preview_{preview_id}.vtt")
+    
+    try:
+        method = generate_subtitles(video_path, vtt_path)
+        return {"status": "success", "method": method, "vtt_url": f"/api/v1/preview/{preview_id}/subtitle"}
+    except Exception as e:
+        raise HTTPException(500, f"Transcription failed: {str(e)}")
+
+@app.get("/api/v1/preview/{preview_id}/subtitle")
+def serve_subtitle(preview_id: str):
+    vtt_path = os.path.join(STORAGE, f"preview_{preview_id}.vtt")
+    if not os.path.exists(vtt_path):
+        raise HTTPException(404, "Subtitle not found")
+    return FileResponse(vtt_path, media_type="text/vtt")
+
+
