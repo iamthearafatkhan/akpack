@@ -1,48 +1,56 @@
+<div align="center">
+
 # 🌿 AKPack
 
-**Honest file compression.** Lossless for exact byte restoration, or AV1 transcoding for 50% smaller video.
+### Honest Compression. Exact Restoration. Lightning-Fast Delivery.
 
-AKPack is a universal file compression and delivery platform. It features a custom `.akp` archive format, a blazing-fast Python CLI, and a beautiful web interface for compressing, restoring, and streaming media.
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](https://www.python.org/)
+[![React 18](https://img.shields.io/badge/React-18-61DAFB)](https://reactjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
 
-## 🚀 Features
+</div>
 
-* **Lossless Compression:** Compress text, code, datasets, and logs by 80–99% with zero data loss. Restores to the exact original bytes (SHA-256 verified).
-* **AV1 Video Transcoding:** Re-encode H.264/H.265 videos to AV1, reducing file size by 40–60% with visually identical quality.
-* **Watch Instantly:** Upload an `.akp` file and stream the video directly in the browser without downloading the original file.
-* **AI Subtitles (Coming Soon):** Generate free, accurate subtitles using Whisper AI.
-* **Open Source CLI:** Run heavy video transcoding locally on your laptop, for free.
+---
 
-## 🛠 Tech Stack
 
-* **Backend:** Python 3.12, FastAPI, SQLAlchemy, PostgreSQL (Neon), Zstandard, Brotli, FFmpeg (SVT-AV1).
-* **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Framer Motion.
-* **Deployment:** Cloudflare Pages (Frontend), Render (Backend), Neon (Database).
+## 🧩 The Problem
 
-## 💻 Local Development Setup
+Sending large files (videos, datasets, backups) is painful. You either lose quality with lossy compression, or you deal with massive file sizes and slow uploads.
 
-### 1. Requirements
-* Python 3.11+
-* Node.js 18+
-* FFmpeg (with `libsvtav1` support) for AV1 transcoding.
+**AKPack** solves this with two modes:
+1.  **Lossless (`.akp`):** Shrinks text, code, and logs by 80–99% while guaranteeing **bit-for-bit exact restoration**. No quality loss, ever.
+2.  **AV1 Transcode:** Shrinks video files by 40–60% with visually near-identical quality for modern browsers.
 
-### 2. Backend Setup
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---|---|
+| **Zero-Quality-Loss** | Lossless mode uses Zstandard and Brotli to restore files exactly. |
+| **AV1 Video Compression** | Re-encodes H.264/H.265 videos to AV1, saving up to 60% size. |
+| **Browser Playback** | Watch restored `.akp` videos instantly without downloading. |
+| **AI Subtitles** | Free, automatic transcription using Groq Whisper or local CPU fallback. |
+| **Native Desktop App** | Standalone `.exe` tool for Windows to compress/transcode offline. |
+
+---
+
+## 🚀 Quick Start (Local)
+
+### 1. Backend
 ```bash
-# Clone the repository
-git clone https://github.com/iamthearafatkhan/akpack.git
-cd akpack
-
 # Install Python dependencies
-pip install -e ".[dev,server]"
+pip install -e ".[server,dev]"
 
-# Setup environment variables
-cp .env.example .env
-# Edit .env and add your Neon PostgreSQL URL
+# Install optional AV1 & Subtitle dependencies
+pip install faster-whisper av<19 groq huggingface_hub
 
-# Run the backend
-./run.sh
+# Start the API server
+uvicorn server.main:app --reload --port 8000
 ```
-<<<<<<< HEAD
-### 3. Frontend Setup
+
+### 2. Frontend Setup
 ```bash
 cd web
 npm install
@@ -50,23 +58,17 @@ npm run dev
 ```
 The app will be available at http://localhost:5173.
 
-## 📦 CLI Usage
-The AKPack CLI allows you to compress and restore files without the web interface.
+## 🛠 Tech Stack
 
-```bash
-# Compress a file losslessly
-akp compress dataset.csv dataset.akp
+Frontend: React, TypeScript, Vite, Tailwind CSS, Framer Motion
 
-# Verify an archive
-akp verify dataset.akp
+Backend: FastAPI, Python 3.11+, SQLAlchemy
 
-# Restore an archive
-akp restore dataset.akp dataset_restored.csv
+Engine: Zstandard, Brotli, FFmpeg (SVT-AV1)
 
-# Transcode a video to AV1 (requires FFmpeg)
-akp compress movie.mp4 movie.av1.mp4 --mode transcode
-```
+AI: Groq API / Hugging Face / faster-whisper
+
+Database: SQLite (Local) / Neon PostgreSQL (Cloud)
+
 ## 📄 License
 This project is licensed under the MIT License - see the LICENSE file for details.
-=======
->>>>>>> d60a4f35b4fe32301c576bfb205a064d46de6295
