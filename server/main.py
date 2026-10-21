@@ -227,13 +227,12 @@ async def preview_akp(file: UploadFile = File(...)):
     work = tempfile.mkdtemp()
     arc_path = os.path.join(work, "input.akp")
     with open(arc_path, "wb") as f:
-        while chunk := await file.read(4 << 20): f.write(chunk) # 4MB chunks
+        while chunk := await file.read(4 << 20): f.write(chunk)
     
     preview_id = uuid.uuid4().hex
     out_path = os.path.join(STORAGE, f"preview_{preview_id}.mp4")
     
     try:
-        # verify=False makes the preview load instantly!
         restore_file(arc_path, out_path, verify=False)
         return {"preview_url": f"/api/v1/preview/{preview_id}"}
     except Exception as e:
@@ -273,9 +272,3 @@ async def transcribe_audio(
     finally:
         try: os.remove(audio_path); os.remove(vtt_path)
         except: pass
-        
-@app.get("/api/v1/preview/{preview_id}/subtitle")
-def serve_subtitle(preview_id: str):
-    vtt_path = os.path.join(STORAGE, f"preview_{preview_id}.vtt")
-    if not os.path.exists(vtt_path): raise HTTPException(404, "Subtitle not found")
-    return FileResponse(vtt_path, media_type="text/vtt")

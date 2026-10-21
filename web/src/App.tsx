@@ -79,6 +79,7 @@ function Home() {
     const [transcribing, setTranscribing] = useState(false);
     const [transcribePct, setTranscribePct] = useState(0);
     const [subtitleLang, setSubtitleLang] = useState("auto");
+    const [wakeStatus, setWakeStatus] = useState("");
 
     useEffect(() => {
         fetch(`${API}/health`).then(r => r.json()).then(h => setFfmpegAvailable(h.ffmpeg === true)).catch(() => setFfmpegAvailable(false));
@@ -161,16 +162,38 @@ function Home() {
         if (!videoBlob) return;
         setTranscribing(true);
         setTranscribePct(0);
-        try {
-            // 1. Wake up Render backend (fixes cold-start timeout)
-            await fetch(`${API}/health`).catch(() => { });
+        setWakeStatus("");
 
-            // 2. Extract audio chunks (5 mins per chunk)
+        try {
+            // --- WAKE UP RENDER SERVER ---
+            let serverAwake = false;
+            let attempts = 0;
+            while (!serverAwake && attempts < 24) { // 24 attempts * 5s = 2 minutes max
+                try {
+                    const ping = await fetch(`${API}/health`, { method: 'GET' });
+                    if (ping.ok) {
+                        serverAwake = true;
+                        break;
+                    }
+                } catch (e) {
+                    // Ignore and retry
+                }
+                attempts++;
+                setWakeStatus(`Waking up server... (${attempts * 5}s)`);
+                await new Promise(res => setTimeout(res, 5000));
+            }
+
+            if (!serverAwake) throw new Error("Server is taking too long to wake up. Please try again in a minute.");
+            setWakeStatus("Extracting audio chunks...");
+
+            // --- EXTRACT AUDIO ---
             const chunks = await extractAudioChunks(videoBlob, 5);
             let finalVtt = "WEBVTT\n\n";
             let timeOffset = 0;
 
             for (let i = 0; i < chunks.length; i++) {
+                setWakeStatus(`Transcribing chunk ${i + 1} of ${chunks.length}...`);
+
                 const fd = new FormData();
                 fd.append("file", chunks[i], `chunk_${i}.wav`);
                 fd.append("language", subtitleLang);
@@ -203,8 +226,10 @@ function Home() {
 
             const vttBlob = new Blob([finalVtt], { type: "text/vtt" });
             setSubtitleUrl(URL.createObjectURL(vttBlob));
+            setWakeStatus("");
         } catch (e: any) {
             alert("Subtitle generation failed: " + e.message);
+            setWakeStatus("");
         } finally {
             setTranscribing(false);
         }
@@ -397,6 +422,12 @@ function Home() {
                                             {transcribing ? `Generating... ${transcribePct}%` : "✨ Generate AI Subtitles"}
                                         </button>
                                     </div>
+
+                                    {wakeStatus && (
+                                        <div className="absolute bottom-4 left-4 right-4 bg-black/80 text-white text-xs p-2 rounded-lg text-center backdrop-blur-sm border border-white/20">
+                                            {wakeStatus}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
