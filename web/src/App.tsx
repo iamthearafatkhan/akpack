@@ -8,7 +8,7 @@ import FAQ from "./pages/FAQ";
 import Privacy from "./pages/Privacy";
 import Loader from "./components/Loader";
 import { decodeAkpInBrowser } from "./lib/akpBrowserDecoder";
-
+import { extractAudioFromVideo } from "./lib/audioExtractor";
 
 type Analysis = { category: string; recommended_mode: "lossless" | "transcode"; reason: string; lossless_expected_pct: number; transcode_expected_pct: number | null; duration_s?: number | null; codec?: string | null; };
 type JobResult = { archive_id: string; mode: "lossless" | "transcode"; orig_size: number; compressed_size: number; savings_pct: number; download_url: string; warning?: string; };
@@ -69,12 +69,18 @@ function Home() {
     const [restoring, setRestoring] = useState(false);
     const [restoreError, setRestoreError] = useState<string | null>(null);
 
-    // Watch state
+    // Watch & Subtitle state
     const [watchFile, setWatchFile] = useState<File | null>(null);
     const [watching, setWatching] = useState(false);
     const [watchProgress, setWatchProgress] = useState(0);
+    const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
     const [videoUrl, setVideoUrl] = useState<string | null>(null);
     const [watchError, setWatchError] = useState<string | null>(null);
+
+    // Subtitle specific state
+    const [subtitleUrl, setSubtitleUrl] = useState<string | null>(null);
+    const [transcribing, setTranscribing] = useState(false);
+    const [subtitleLang, setSubtitleLang] = useState("auto");
 
     useEffect(() => {
         fetch(`${API}/health`).then(r => r.json()).then(h => setFfmpegAvailable(h.ffmpeg === true)).catch(() => setFfmpegAvailable(false));
@@ -140,21 +146,44 @@ function Home() {
 
     async function handleWatch() {
         if (!watchFile) return;
-        setWatching(true); setWatchError(null); setVideoUrl(null); setWatchProgress(0);
+        setWatching(true); setWatchError(null); setVideoUrl(null); setVideoBlob(null); setSubtitleUrl(null); setWatchProgress(0);
 
         try {
-            // Decode entirely in the user's browser!
-            const videoBlob = await decodeAkpInBrowser(watchFile, (pct) => {
-                setWatchProgress(pct);
-            });
-
-            // Create a local object URL for the <video> tag
-            const localUrl = URL.createObjectURL(videoBlob);
-            setVideoUrl(localUrl);
+            const decodedBlob = await decodeAkpInBrowser(watchFile, (pct) => setWatchProgress(pct));
+            setVideoBlob(decodedBlob);
+            setVideoUrl(URL.createObjectURL(decodedBlob));
         } catch (e: any) {
             setWatchError(e.message || "Failed to decode video in browser.");
         } finally {
             setWatching(false);
+        }
+    }
+
+    async function handleTranscribe() {
+        if (!videoBlob) return;
+        setTranscribing(true);
+        try {
+            // 1. Extract audio in the browser to a tiny WAV file
+            const audioBlob = await extractAudioFromVideo(videoBlob);
+
+            // 2. Send audio to backend
+            const fd = new FormData();
+            fd.append("file", audioBlob, "audio.wav");
+            fd.append("language", subtitleLang);
+
+            const r = await fetch(`${API}/api/v1/transcribe`, { method: "POST", body: fd });
+            if (!r.ok) throw new Error(await r.text());
+
+            const data = await r.json();
+
+            // 3. Convert VTT text to a Blob URL for the <track>
+            const vttBlob = new Blob([data.vtt_content], { type: "text/vtt" });
+            setSubtitleUrl(URL.createObjectURL(vttBlob));
+
+        } catch (e: any) {
+            alert("Subtitle generation failed: " + e.message);
+        } finally {
+            setTranscribing(false);
         }
     }
 
@@ -183,6 +212,7 @@ function Home() {
 
                 <div className="max-w-2xl mx-auto bg-[#152219] border border-[#2d4a37] rounded-2xl p-6 shadow-xl shadow-black/30 transition-colors">
 
+                    {/* ... [Compress tab unchanged] ... */}
                     {activeTab === "compress" && (
                         <div className="space-y-5">
                             <label className="block">
@@ -276,6 +306,7 @@ function Home() {
                         </div>
                     )}
 
+                    {/* ... [Restore tab unchanged] ... */}
                     {activeTab === "restore" && (
                         <div className="space-y-5">
                             <label className="block">
@@ -291,11 +322,12 @@ function Home() {
                         </div>
                     )}
 
+                    {/* ... [Watch tab with updated Language Dropdown] ... */}
                     {activeTab === "watch" && (
                         <div className="space-y-5">
                             <label className="block">
                                 <span className="text-xs uppercase tracking-wider text-[#8fa896] mb-2 block">Upload an .akp file to watch instantly</span>
-                                <input type="file" accept=".akp" onChange={e => { setWatchFile(e.target.files?.[0] ?? null); setVideoUrl(null); }} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
+                                <input type="file" accept=".akp" onChange={e => { setWatchFile(e.target.files?.[0] ?? null); setVideoUrl(null); setSubtitleUrl(null); setVideoBlob(null); }} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
                                 {watchFile && <span className="text-xs text-[#8fa896] mt-3 block"><span className="text-[#c8d6be] font-medium">{watchFile.name}</span> · {formatBytes(watchFile.size)}</span>}
                             </label>
 
@@ -315,14 +347,35 @@ function Home() {
 
                             {videoUrl && (
                                 <div className="mt-4 rounded-xl overflow-hidden border border-[#2d4a37] bg-black shadow-lg relative group">
-                                    <video src={videoUrl} controls autoPlay className="w-full max-h-[600px] object-contain" crossOrigin="anonymous" />
+                                    <video src={videoUrl} controls autoPlay className="w-full max-h-[600px] object-contain" crossOrigin="anonymous">
+                                        {subtitleUrl && (
+                                            <track kind="subtitles" src={subtitleUrl} srcLang="en" label="Subtitles" default />
+                                        )}
+                                    </video>
 
-                                    <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button
-                                            onClick={() => alert("Subtitles are temporarily disabled for local browser decoding. Use the Web version for AI subtitles.")}
-                                            className="px-3 py-1.5 bg-black/70 hover:bg-black text-white text-xs font-medium rounded-lg border border-white/20 backdrop-blur-sm flex items-center gap-2"
+                                    {/* Subtitle Controls inside the Video Player area */}
+                                    <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <select
+                                            value={subtitleLang}
+                                            onChange={e => setSubtitleLang(e.target.value)}
+                                            className="bg-black/70 text-white text-xs border border-white/20 rounded-lg px-2 py-1.5 backdrop-blur-sm outline-none cursor-pointer"
                                         >
-                                            ✨ Local Subtitles (Coming Soon)
+                                            <option value="auto">Auto-Detect Language</option>
+                                            <option value="en">English</option>
+                                            <option value="es">Spanish</option>
+                                            <option value="fr">French</option>
+                                            <option value="hi">Hindi</option>
+                                            <option value="bn">Bengali</option>
+                                            <option value="id">Indonesian</option>
+                                            <option value="ar">Arabic</option>
+                                        </select>
+
+                                        <button
+                                            onClick={handleTranscribe}
+                                            disabled={transcribing}
+                                            className="px-3 py-1.5 bg-black/70 hover:bg-black text-white text-xs font-medium rounded-lg border border-white/20 backdrop-blur-sm flex items-center gap-2 disabled:opacity-50"
+                                        >
+                                            {transcribing ? "Generating..." : "✨ Generate AI Subtitles"}
                                         </button>
                                     </div>
                                 </div>

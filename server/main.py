@@ -248,19 +248,32 @@ def serve_preview(preview_id: str):
     if not os.path.exists(out_path): raise HTTPException(404, "Preview not found")
     return FileResponse(out_path, media_type="video/mp4", headers={"Accept-Ranges": "bytes"})
 
-@app.post("/api/v1/transcribe/{preview_id}")
-async def transcribe_video(preview_id: str):
-    video_path = os.path.join(STORAGE, f"preview_{preview_id}.mp4")
-    if not os.path.exists(video_path): raise HTTPException(404, "Video not found")
+@app.post("/api/v1/transcribe")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    language: str = Form("auto")
+):
+    work = tempfile.mkdtemp()
+    audio_path = os.path.join(work, "audio.wav")
+    vtt_path = os.path.join(work, "subtitle.vtt")
     
-    vtt_path = os.path.join(STORAGE, f"preview_{preview_id}.vtt")
-    
+    with open(audio_path, "wb") as f:
+        while chunk := await file.read(1 << 20):
+            f.write(chunk)
+            
     try:
-        method = generate_subtitles(video_path, vtt_path)
-        return {"status": "success", "method": method, "vtt_url": f"/api/v1/preview/{preview_id}/subtitle"}
+        method = generate_subtitles(audio_path, vtt_path, language)
+        return {
+            "status": "success",
+            "method": method,
+            "vtt_content": open(vtt_path, "r", encoding="utf-8").read()
+        }
     except Exception as e:
         raise HTTPException(500, f"Transcription failed: {str(e)}")
-
+    finally:
+        try: os.remove(audio_path); os.remove(vtt_path)
+        except: pass
+        
 @app.get("/api/v1/preview/{preview_id}/subtitle")
 def serve_subtitle(preview_id: str):
     vtt_path = os.path.join(STORAGE, f"preview_{preview_id}.vtt")
