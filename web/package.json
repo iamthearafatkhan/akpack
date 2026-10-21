@@ -8,6 +8,9 @@
         "preview": "vite preview"
     },
     "dependencies": {
+        "@bokuweb/zstd-wasm": "^0.0.27",
+        "brotli-dec-wasm": "^2.3.2",
+        "fflate": "^0.8.3",
         "framer-motion": "^14.4.0",
         "react": "^18.3.1",
         "react-dom": "^18.3.1",

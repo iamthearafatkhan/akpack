@@ -7,6 +7,8 @@ import Footer from "./components/Footer";
 import FAQ from "./pages/FAQ";
 import Privacy from "./pages/Privacy";
 import Loader from "./components/Loader";
+import { decodeAkpInBrowser } from "./lib/akpBrowserDecoder";
+
 
 type Analysis = { category: string; recommended_mode: "lossless" | "transcode"; reason: string; lossless_expected_pct: number; transcode_expected_pct: number | null; duration_s?: number | null; codec?: string | null; };
 type JobResult = { archive_id: string; mode: "lossless" | "transcode"; orig_size: number; compressed_size: number; savings_pct: number; download_url: string; warning?: string; };
@@ -67,13 +69,12 @@ function Home() {
     const [restoring, setRestoring] = useState(false);
     const [restoreError, setRestoreError] = useState<string | null>(null);
 
-    // Watch & Subtitle state
+    // Watch state
     const [watchFile, setWatchFile] = useState<File | null>(null);
     const [watching, setWatching] = useState(false);
+    const [watchProgress, setWatchProgress] = useState(0);
     const [videoUrl, setVideoUrl] = useState<string | null>(null);
     const [watchError, setWatchError] = useState<string | null>(null);
-    const [subtitleUrl, setSubtitleUrl] = useState<string | null>(null);
-    const [transcribing, setTranscribing] = useState(false);
 
     useEffect(() => {
         fetch(`${API}/health`).then(r => r.json()).then(h => setFfmpegAvailable(h.ffmpeg === true)).catch(() => setFfmpegAvailable(false));
@@ -138,29 +139,22 @@ function Home() {
     }
 
     async function handleWatch() {
-        if (!watchFile) return; setWatching(true); setWatchError(null); setVideoUrl(null); setSubtitleUrl(null);
-        try {
-            const fd = new FormData(); fd.append("file", watchFile);
-            const r = await fetch(`${API}/api/v1/preview`, { method: "POST", body: fd });
-            if (!r.ok) throw new Error(await r.text());
-            const data = await r.json();
-            setVideoUrl(`${API}${data.preview_url}`);
-        } catch (e: any) { setWatchError(e.message || "Failed to preview."); } finally { setWatching(false); }
-    }
+        if (!watchFile) return;
+        setWatching(true); setWatchError(null); setVideoUrl(null); setWatchProgress(0);
 
-    async function handleTranscribe() {
-        if (!videoUrl) return;
-        setTranscribing(true);
         try {
-            const previewId = videoUrl.split("/").pop();
-            const r = await fetch(`${API}/api/v1/transcribe/${previewId}`, { method: "POST" });
-            if (!r.ok) throw new Error(await r.text());
-            const data = await r.json();
-            setSubtitleUrl(`${API}${data.vtt_url}`);
+            // Decode entirely in the user's browser!
+            const videoBlob = await decodeAkpInBrowser(watchFile, (pct) => {
+                setWatchProgress(pct);
+            });
+
+            // Create a local object URL for the <video> tag
+            const localUrl = URL.createObjectURL(videoBlob);
+            setVideoUrl(localUrl);
         } catch (e: any) {
-            alert("Subtitle generation failed: " + e.message);
+            setWatchError(e.message || "Failed to decode video in browser.");
         } finally {
-            setTranscribing(false);
+            setWatching(false);
         }
     }
 
@@ -274,7 +268,6 @@ function Home() {
                             <div className="mt-6 bg-[#152219]/50 border border-[#2d4a37] border-dashed rounded-2xl p-5 text-center">
                                 <h3 className="text-sm font-semibold text-[#e5eedb] mb-1">Need AV1 but using the free live web version?</h3>
                                 <p className="text-xs text-[#8fa896] mb-3 max-w-md mx-auto">Cloud servers don't have the CPU for heavy video encoding. Download the free open-source CLI to transcode videos on your own laptop.</p>
-                                {/* UPDATED LINK HERE */}
                                 <a href="https://github.com/iamthearafatkhan/akpack/releases/latest/download/AKPack-Tool.exe" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2d4a37] hover:bg-[#4d7c0f] text-white text-sm font-semibold transition-colors">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.9 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6A12 12 0 0 0 12 .3z" /></svg>
                                     Download CLI Tool (.exe)
@@ -302,33 +295,34 @@ function Home() {
                         <div className="space-y-5">
                             <label className="block">
                                 <span className="text-xs uppercase tracking-wider text-[#8fa896] mb-2 block">Upload an .akp file to watch instantly</span>
-                                <input type="file" accept=".akp" onChange={e => { setWatchFile(e.target.files?.[0] ?? null); setVideoUrl(null); setSubtitleUrl(null); }} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
+                                <input type="file" accept=".akp" onChange={e => { setWatchFile(e.target.files?.[0] ?? null); setVideoUrl(null); }} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
                                 {watchFile && <span className="text-xs text-[#8fa896] mt-3 block"><span className="text-[#c8d6be] font-medium">{watchFile.name}</span> · {formatBytes(watchFile.size)}</span>}
                             </label>
 
                             <button onClick={handleWatch} disabled={!watchFile || watching} className="w-full py-3.5 rounded-xl bg-[#84cc16] hover:bg-[#a3e635] disabled:bg-[#2d4a37] disabled:text-[#5a7565] text-[#0a1610] font-bold text-sm tracking-wide transition-all shadow-lg shadow-[#84cc16]/20">
-                                {watching ? "Extracting video..." : "Extract & Play Video"}
+                                {watching ? `Decoding in browser... ${watchProgress}%` : "Extract & Play Video"}
                             </button>
 
                             {watchError && <div className="bg-[#2a0a0a] border border-[#7f1d1d] rounded-lg p-3"><p className="text-sm text-[#fca5a5] break-words">{watchError}</p></div>}
 
-                            {watching && <Loader text="Restoring video stream..." />}
+                            {watching && (
+                                <div className="space-y-2">
+                                    <div className="w-full h-2.5 bg-[#0a1610] rounded-full overflow-hidden border border-[#2d4a37]">
+                                        <div className="h-full bg-gradient-to-r from-[#4d7c0f] via-[#84cc16] to-[#a3e635] transition-all duration-300 rounded-full" style={{ width: `${watchProgress}%` }} />
+                                    </div>
+                                </div>
+                            )}
 
                             {videoUrl && (
                                 <div className="mt-4 rounded-xl overflow-hidden border border-[#2d4a37] bg-black shadow-lg relative group">
-                                    <video src={videoUrl} controls autoPlay className="w-full max-h-[600px] object-contain" crossOrigin="anonymous">
-                                        {subtitleUrl && (
-                                            <track kind="subtitles" src={subtitleUrl} srcLang="en" label="English" default />
-                                        )}
-                                    </video>
+                                    <video src={videoUrl} controls autoPlay className="w-full max-h-[600px] object-contain" crossOrigin="anonymous" />
 
                                     <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button
-                                            onClick={handleTranscribe}
-                                            disabled={transcribing}
-                                            className="px-3 py-1.5 bg-black/70 hover:bg-black text-white text-xs font-medium rounded-lg border border-white/20 backdrop-blur-sm flex items-center gap-2 disabled:opacity-50"
+                                            onClick={() => alert("Subtitles are temporarily disabled for local browser decoding. Use the Web version for AI subtitles.")}
+                                            className="px-3 py-1.5 bg-black/70 hover:bg-black text-white text-xs font-medium rounded-lg border border-white/20 backdrop-blur-sm flex items-center gap-2"
                                         >
-                                            {transcribing ? "Transcribing..." : "✨ Generate AI Subtitles"}
+                                            ✨ Local Subtitles (Coming Soon)
                                         </button>
                                     </div>
                                 </div>
