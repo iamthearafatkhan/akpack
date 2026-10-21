@@ -41,6 +41,7 @@ cp .env.example .env
 # Run the backend
 ./run.sh
 ```
+<<<<<<< HEAD
 ### 3. Frontend Setup
 ```bash
 cd web
@@ -67,3 +68,5 @@ akp compress movie.mp4 movie.av1.mp4 --mode transcode
 ```
 ## 📄 License
 This project is licensed under the MIT License - see the LICENSE file for details.
+=======
+>>>>>>> d60a4f35b4fe32301c576bfb205a064d46de6295
