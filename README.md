@@ -40,3 +40,30 @@ cp .env.example .env
 
 # Run the backend
 ./run.sh
+```
+### 3. Frontend Setup
+```bash
+cd web
+npm install
+npm run dev
+```
+The app will be available at http://localhost:5173.
+
+## 📦 CLI Usage
+The AKPack CLI allows you to compress and restore files without the web interface.
+
+```bash
+# Compress a file losslessly
+akp compress dataset.csv dataset.akp
+
+# Verify an archive
+akp verify dataset.akp
+
+# Restore an archive
+akp restore dataset.akp dataset_restored.csv
+
+# Transcode a video to AV1 (requires FFmpeg)
+akp compress movie.mp4 movie.av1.mp4 --mode transcode
+```
+## 📄 License
+This project is licensed under the MIT License - see the LICENSE file for details.

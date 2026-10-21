@@ -1,4 +1,3 @@
-"""High-level: restore an .akp archive to exact original bytes."""
 import os
 from core.container import read_header
 from core.codecs import get_codec
@@ -6,6 +5,11 @@ from core.integrity import sha256_file, sha256_bytes
 from core.format import AKPFormatError
 
 def restore_file(archive_path: str, out_path: str, verify: bool = True) -> dict:
+    """
+    Restores an .akp file. 
+    If verify=True, it hashes the final file to ensure 100% perfection.
+    Set verify=False for fast video previews.
+    """
     with open(archive_path, "rb") as f:
         header = read_header(f)
         chunks = header["manifest"]["chunks"]
@@ -20,14 +24,15 @@ def restore_file(archive_path: str, out_path: str, verify: bool = True) -> dict:
                 chunk = codec.decompress(payload, meta["orig_len"])
 
                 if len(chunk) != meta["orig_len"]:
-                    raise AKPFormatError(f"Chunk {meta['idx']} length mismatch")
-                
+                    raise AKPFormatError(
+                        f"Chunk {meta['idx']} length mismatch: "
+                        f"{len(chunk)} != {meta['orig_len']}"
+                    )
                 if sha256_bytes(chunk).hex() != meta["sha256"]:
                     raise AKPFormatError(f"Chunk {meta['idx']} hash mismatch")
 
                 out.write(chunk)
 
-    # ONLY do the slow whole-file hash check if verify=True
     if verify:
         actual = sha256_file(out_path)
         if actual != header["orig_sha256"]:

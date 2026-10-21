@@ -1,69 +1,121 @@
 import os
 import subprocess
-import math
+import requests
 import logging
-from pathlib import Path
+import tempfile
 from groq import Groq
-from faster_whisper import WhisperModel
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = "whisper-large-v3-turbo"
-MAX_GROQ_MB = 24  # Groq limit is 25MB
+HF_TOKEN = os.getenv("HF_TOKEN")
 
-def extract_audio(video_path: str, output_path: str, start_time: float = 0, duration: float = None):
+def extract_audio(video_path: str, output_wav: str) -> bool:
     """Extracts audio to 16kHz mono WAV using FFmpeg."""
-    cmd = ["ffmpeg", "-y", "-i", video_path]
-    if start_time > 0:
-        cmd.extend(["-ss", str(start_time)])
-    if duration:
-        cmd.extend(["-t", str(duration)])
-    cmd.extend(["-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", output_path])
-    subprocess.run(cmd, check=True, capture_output=True)
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", output_wav
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg audio extraction failed: {e.stderr.decode()}")
+        return False
 
-def transcribe_with_groq(audio_path: str) -> str:
-    """Primary method: Groq Whisper API."""
+def transcribe_groq(audio_path: str) -> str:
+    """Tier 1: Groq API (Fastest, Free)."""
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY is missing.")
-    
     client = Groq(api_key=GROQ_API_KEY)
     with open(audio_path, "rb") as f:
-        transcription = client.audio.transcriptions.create(
-            file=(Path(audio_path).name, f.read()),
-            model=GROQ_MODEL,
-            response_format="vtt", # Returns WebVTT directly
+        res = client.audio.transcriptions.create(
+            file=(os.path.basename(audio_path), f.read()),
+            model="whisper-large-v3-turbo",
+            response_format="vtt",
         )
-    return transcription
+    return res
 
-def transcribe_fallback(audio_path: str) -> str:
-    """Fallback method: Local faster-whisper (CPU)."""
-    logger.warning("Falling back to local faster-whisper...")
+def transcribe_huggingface(audio_path: str) -> str:
+    """Tier 2: Hugging Face API (Free Backup)."""
+    if not HF_TOKEN:
+        raise ValueError("HF_TOKEN is missing.")
+    
+    API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    
+    with open(audio_path, "rb") as f:
+        data = f.read()
+    
+    response = requests.post(API_URL, headers=headers, data=data, timeout=60)
+    if response.status_code != 200:
+        raise Exception(f"HF API Error: {response.text}")
+    
+    # HF returns JSON chunks, we format to VTT
+    result = response.json()
+    if isinstance(result, list) and len(result) > 0:
+        chunks = result[0].get("chunks", [])
+        vtt = "WEBVTT\n\n"
+        for i, c in enumerate(chunks):
+            start, end = c["timestamp"]
+            start_str = f"{int(start // 60):02d}:{start % 60:06.3f}"
+            end_str = f"{int(end // 60):02d}:{end % 60:06.3f}" if end else "00:00:10.000"
+            vtt += f"{i+1}\n{start_str} --> {end_str}\n{c['text'].strip()}\n\n"
+        return vtt
+    raise Exception("Could not parse HF response.")
+
+def transcribe_local(audio_path: str) -> str:
+    """Tier 3: Local CPU Fallback (No internet required)."""
+    from faster_whisper import WhisperModel
+    logger.warning("Using local faster-whisper CPU. This may take a while...")
     model = WhisperModel("base", device="cpu", compute_type="int8")
     segments, _ = model.transcribe(audio_path, beam_size=5)
     
     vtt = "WEBVTT\n\n"
     for i, seg in enumerate(segments):
-        start = f"{int(seg.start // 3600):02d}:{int((seg.start % 3600) // 60):02d}:{seg.start % 60:06.3f}"
-        end = f"{int(seg.end // 3600):02d}:{int((seg.end % 3600) // 60):02d}:{seg.end % 60:06.3f}"
-        vtt += f"{i+1}\n{start} --> {end}\n{seg.text.strip()}\n\n"
+        start_str = f"{int(seg.start // 60):02d}:{seg.start % 60:06.3f}"
+        end_str = f"{int(seg.end // 60):02d}:{seg.end % 60:06.3f}"
+        vtt += f"{i+1}\n{start_str} --> {end_str}\n{seg.text.strip()}\n\n"
     return vtt
 
-def generate_subtitles(video_path: str, output_vtt: str):
-    """Handles chunking for >24MB files and orchestrates fallback."""
-    file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+def generate_subtitles(video_path: str, output_vtt: str) -> str:
+    """Orchestrates audio extraction, API limits, and fallbacks."""
+    temp_dir = tempfile.mkdtemp()
+    wav_path = os.path.join(temp_dir, "audio.wav")
     
-    if file_size_mb <= MAX_GROQ_MB:
+    if not extract_audio(video_path, wav_path):
+        raise Exception("Failed to extract audio from video.")
+
+    file_size_mb = os.path.getsize(wav_path) / (1024 * 1024)
+    method_used = "Unknown"
+
+    # If file is < 24MB, process directly
+    if file_size_mb <= 24:
         try:
-            vtt_content = transcribe_with_groq(video_path)
-            with open(output_vtt, "w", encoding="utf-8") as f:
-                f.write(vtt_content)
-            return "Groq API (Fast)"
+            vtt = transcribe_groq(wav_path)
+            method_used = "Groq API (Fast)"
         except Exception as e:
-            logger.error(f"Groq failed: {e}. Falling back.")
-            
-    # Fallback if file too large or Groq fails
-    vtt_content = transcribe_fallback(video_path)
+            logger.warning(f"Groq failed: {e}. Trying Hugging Face...")
+            try:
+                vtt = transcribe_huggingface(wav_path)
+                method_used = "Hugging Face API"
+            except Exception as e2:
+                logger.warning(f"HF failed: {e2}. Falling back to Local CPU.")
+                vtt = transcribe_local(wav_path)
+                method_used = "Local CPU (Slow)"
+    else:
+        # For files > 24MB, we use local faster-whisper directly to avoid chunking complexity
+        vtt = transcribe_local(wav_path)
+        method_used = "Local CPU (Large File)"
+
     with open(output_vtt, "w", encoding="utf-8") as f:
-        f.write(vtt_content)
-    return "Local Fallback (CPU)"
+        f.write(vtt)
+    
+    # Cleanup
+    try: os.remove(wav_path)
+    except: pass
+    
+    return method_used

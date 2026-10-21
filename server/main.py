@@ -3,13 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 import os, uuid, tempfile, json
+import shutil
 
 load_dotenv()
 
 from core.compressor import compress_file
 from core.restorer import restore_file
-from core.transcode import transcode_av1
+from core.transcode import transcode_av1, ACTIVE_PROCESSES
 from core.detector import analyze
+from core.transcriber import generate_subtitles
 from .db import Base, engine, SessionLocal
 from .models import Archive, Job
 
@@ -46,7 +48,6 @@ def _ffmpeg_available() -> bool:
 # ---------- Analyze ----------
 @app.post("/api/v1/analyze")
 async def analyze_endpoint(file: UploadFile = File(...)) -> dict:
-    """Upload a file, get a mode recommendation + expected savings."""
     work = tempfile.mkdtemp()
     safe_name = os.path.basename(file.filename or "upload.bin")
     src_path = os.path.join(work, safe_name)
@@ -56,13 +57,11 @@ async def analyze_endpoint(file: UploadFile = File(...)) -> dict:
     try:
         return analyze(src_path)
     finally:
-        try:
-            os.unlink(src_path)
-        except OSError:
-            pass
+        try: os.unlink(src_path)
+        except OSError: pass
 
 
-# ---------- Compress (two modes) ----------
+# ---------- Compress ----------
 @app.post("/api/v1/compress")
 async def compress(
     background_tasks: BackgroundTasks,
@@ -72,17 +71,8 @@ async def compress(
     if mode not in ("lossless", "transcode"):
         raise HTTPException(400, "mode must be 'lossless' or 'transcode'")
 
-    # >>> THIS is the missing block <<<
-    # Refuse AV1 cleanly if this server has no FFmpeg (e.g. Render free tier).
     if mode == "transcode" and not _ffmpeg_available():
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "AV1 transcoding requires FFmpeg with libsvtav1, which is not "
-                "installed on this server. Install FFmpeg locally and use the "
-                "AKPack CLI, or contact us for Pro access."
-            ),
-        )
+        raise HTTPException(status_code=503, detail="AV1 transcoding requires FFmpeg.")
 
     archive_id = uuid.uuid4().hex
     job_id = uuid.uuid4().hex
@@ -112,13 +102,9 @@ async def compress(
         db = SessionLocal()
         try:
             db.add(Archive(
-                id=archive_id,
-                filename=file.filename or safe_name,
-                size_orig=result["orig_size"],
-                size_comp=result["compressed_size"],
-                sha256_orig=result["orig_sha256"],
-                storage_path=arc_path,
-                mode="lossless",
+                id=archive_id, filename=file.filename or safe_name,
+                size_orig=result["orig_size"], size_comp=result["compressed_size"],
+                sha256_orig=result["orig_sha256"], storage_path=arc_path, mode="lossless",
             ))
             db.commit()
         finally:
@@ -127,52 +113,36 @@ async def compress(
         _update_job(
             job_id, status="completed", progress=100.0,
             result_json=json.dumps({
-                "archive_id": archive_id,
-                "mode": "lossless",
-                "orig_size": result["orig_size"],
-                "compressed_size": result["compressed_size"],
+                "archive_id": archive_id, "mode": "lossless",
+                "orig_size": result["orig_size"], "compressed_size": result["compressed_size"],
                 "savings_pct": 100 * (1 - result["compressed_size"] / result["orig_size"]),
-                "sha256": result["orig_sha256"],
-                "download_url": f"/api/v1/archives/{archive_id}/download",
+                "sha256": result["orig_sha256"], "download_url": f"/api/v1/archives/{archive_id}/download",
             }),
         )
         return {"job_id": job_id, "mode": "lossless", "status": "completed"}
 
-    # AV1: run in background
     out_path = os.path.join(STORAGE, f"{archive_id}.mp4")
-    background_tasks.add_task(
-        _run_transcode, job_id, archive_id, src_path, out_path, file.filename or safe_name
-    )
+    background_tasks.add_task(_run_transcode, job_id, archive_id, src_path, out_path, file.filename or safe_name)
     return {"job_id": job_id, "mode": "transcode", "status": "queued"}
 
 
 def _run_transcode(job_id: str, archive_id: str, src_path: str, out_path: str, original_name: str) -> None:
-    """Background worker: transcode to AV1, track progress, update DB."""
     _update_job(job_id, status="processing", progress=1.0)
-
-    def on_progress(pct: float) -> None:
-        _update_job(job_id, progress=pct)
+    def on_progress(pct: float) -> None: _update_job(job_id, progress=pct)
 
     try:
         result = transcode_av1(src_path, out_path, job_id=job_id, crf=32, preset=8, on_progress=on_progress)
     except Exception as e:
         _update_job(job_id, status="failed", message=str(e))
-        try:
-            os.unlink(src_path)
-        except OSError:
-            pass
+        try: os.unlink(src_path)
+        except OSError: pass
         return
 
     db = SessionLocal()
     try:
         db.add(Archive(
-            id=archive_id,
-            filename=original_name,
-            size_orig=result["orig_size"],
-            size_comp=result["new_size"],
-            sha256_orig="",
-            storage_path=out_path,
-            mode="transcode",
+            id=archive_id, filename=original_name, size_orig=result["orig_size"],
+            size_comp=result["new_size"], sha256_orig="", storage_path=out_path, mode="transcode",
         ))
         db.commit()
     finally:
@@ -181,21 +151,15 @@ def _run_transcode(job_id: str, archive_id: str, src_path: str, out_path: str, o
     _update_job(
         job_id, status="completed", progress=100.0,
         result_json=json.dumps({
-            "archive_id": archive_id,
-            "mode": "transcode",
-            "orig_size": result["orig_size"],
-            "compressed_size": result["new_size"],
-            "savings_pct": result["savings_pct"],
-            "codec": "av1",
-            "crf": result["crf"],
+            "archive_id": archive_id, "mode": "transcode",
+            "orig_size": result["orig_size"], "compressed_size": result["new_size"],
+            "savings_pct": result["savings_pct"], "codec": "av1", "crf": result["crf"],
             "download_url": f"/api/v1/archives/{archive_id}/download",
-            "warning": "AV1 output is not bit-identical to the original. It is visually near-transparent.",
+            "warning": "AV1 output is not bit-identical to the original.",
         }),
     )
-    try:
-        os.unlink(src_path)
-    except OSError:
-        pass
+    try: os.unlink(src_path)
+    except OSError: pass
 
 
 def _update_job(job_id: str, **fields) -> None:
@@ -203,75 +167,54 @@ def _update_job(job_id: str, **fields) -> None:
     try:
         job = db.get(Job, job_id)
         if job:
-            for k, v in fields.items():
-                setattr(job, k, v)
+            for k, v in fields.items(): setattr(job, k, v)
             db.commit()
     finally:
         db.close()
 
 
-# ---------- Job status ----------
+# ---------- Jobs ----------
 @app.get("/api/v1/jobs/{job_id}")
 def get_job(job_id: str) -> dict:
     db = SessionLocal()
     try:
         job = db.get(Job, job_id)
-        if not job:
-            raise HTTPException(404, "Job not found")
+        if not job: raise HTTPException(404, "Job not found")
         return {
-            "job_id": job.id,
-            "kind": job.kind,
-            "status": job.status,
-            "progress": job.progress,
-            "message": job.message,
+            "job_id": job.id, "kind": job.kind, "status": job.status,
+            "progress": job.progress, "message": job.message,
             "result": json.loads(job.result_json) if job.result_json else None,
         }
     finally:
         db.close()
 
-
-# ---------- Archive endpoints ----------
-@app.get("/api/v1/archives/{archive_id}")
-def get_archive(archive_id: str) -> dict:
-    db = SessionLocal()
-    try:
-        row = db.get(Archive, archive_id)
-        if not row:
-            raise HTTPException(404, "Not found")
-        return {
-            "id": row.id, "filename": row.filename, "mode": row.mode,
-            "orig_size": row.size_orig, "compressed_size": row.size_comp,
-            "sha256": row.sha256_orig,
-        }
-    finally:
-        db.close()
+@app.post("/api/v1/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict:
+    if job_id in ACTIVE_PROCESSES:
+        ACTIVE_PROCESSES[job_id].terminate()
+    _update_job(job_id, status="failed", message="Cancelled by user")
+    return {"ok": True, "message": "Job cancelled"}
 
 
+# ---------- Archives & Preview ----------
 @app.get("/api/v1/archives/{archive_id}/download")
 def download(archive_id: str):
     db = SessionLocal()
     try:
         row = db.get(Archive, archive_id)
-        if not row:
-            raise HTTPException(404, "Not found")
+        if not row: raise HTTPException(404, "Not found")
         ext = "mp4" if row.mode == "transcode" else "akp"
         mime = "video/mp4" if row.mode == "transcode" else "application/octet-stream"
-        return FileResponse(
-            row.storage_path, 
-            filename=f"{row.filename}.{ext}",
-            media_type=mime
-        )
+        return FileResponse(row.storage_path, filename=f"{row.filename}.{ext}", media_type=mime)
     finally:
         db.close()
-
 
 @app.post("/api/v1/restore")
 async def restore(file: UploadFile = File(...)):
     work = tempfile.mkdtemp()
     arc_path = os.path.join(work, "input.akp")
     with open(arc_path, "wb") as f:
-        while chunk := await file.read(1 << 20):
-            f.write(chunk)
+        while chunk := await file.read(1 << 20): f.write(chunk)
     out_path = os.path.join(work, "restored.bin")
     try:
         restore_file(arc_path, out_path)
@@ -279,32 +222,18 @@ async def restore(file: UploadFile = File(...)):
         raise HTTPException(400, str(e))
     return FileResponse(out_path, filename="restored.bin")
 
-@app.post("/api/v1/jobs/{job_id}/cancel")
-def cancel_job(job_id: str) -> dict:
-    from core.transcode import ACTIVE_PROCESSES
-    if job_id in ACTIVE_PROCESSES:
-        ACTIVE_PROCESSES[job_id].terminate() # Kills FFmpeg
-        _update_job(job_id, status="failed", message="Cancelled by user")
-        return {"ok": True, "message": "Job cancelled"}
-    
-    # If it's a lossless job or already finished
-    _update_job(job_id, status="failed", message="Cancelled by user")
-    return {"ok": True, "message": "Job marked as cancelled"}
-
-
 @app.post("/api/v1/preview")
 async def preview_akp(file: UploadFile = File(...)):
     work = tempfile.mkdtemp()
     arc_path = os.path.join(work, "input.akp")
     with open(arc_path, "wb") as f:
-        while chunk := await file.read(1 << 20):
-            f.write(chunk)
+        while chunk := await file.read(4 << 20): f.write(chunk) # 4MB chunks
     
     preview_id = uuid.uuid4().hex
     out_path = os.path.join(STORAGE, f"preview_{preview_id}.mp4")
     
     try:
-        # PASS verify=False HERE TO MAKE IT FAST
+        # verify=False makes the preview load instantly!
         restore_file(arc_path, out_path, verify=False)
         return {"preview_url": f"/api/v1/preview/{preview_id}"}
     except Exception as e:
@@ -315,18 +244,14 @@ async def preview_akp(file: UploadFile = File(...)):
 
 @app.get("/api/v1/preview/{preview_id}")
 def serve_preview(preview_id: str):
-    """Serves the restored video for the <video> tag."""
     out_path = os.path.join(STORAGE, f"preview_{preview_id}.mp4")
-    if not os.path.exists(out_path):
-        raise HTTPException(404, "Preview not found")
-    return FileResponse(out_path, media_type="video/mp4")
-from core.transcriber import generate_subtitles
+    if not os.path.exists(out_path): raise HTTPException(404, "Preview not found")
+    return FileResponse(out_path, media_type="video/mp4", headers={"Accept-Ranges": "bytes"})
 
 @app.post("/api/v1/transcribe/{preview_id}")
 async def transcribe_video(preview_id: str):
     video_path = os.path.join(STORAGE, f"preview_{preview_id}.mp4")
-    if not os.path.exists(video_path):
-        raise HTTPException(404, "Video not found")
+    if not os.path.exists(video_path): raise HTTPException(404, "Video not found")
     
     vtt_path = os.path.join(STORAGE, f"preview_{preview_id}.vtt")
     
@@ -339,8 +264,5 @@ async def transcribe_video(preview_id: str):
 @app.get("/api/v1/preview/{preview_id}/subtitle")
 def serve_subtitle(preview_id: str):
     vtt_path = os.path.join(STORAGE, f"preview_{preview_id}.vtt")
-    if not os.path.exists(vtt_path):
-        raise HTTPException(404, "Subtitle not found")
+    if not os.path.exists(vtt_path): raise HTTPException(404, "Subtitle not found")
     return FileResponse(vtt_path, media_type="text/vtt")
-
-

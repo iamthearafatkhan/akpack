@@ -6,6 +6,7 @@ import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import FAQ from "./pages/FAQ";
 import Privacy from "./pages/Privacy";
+import Loader from "./components/Loader";
 
 type Analysis = { category: string; recommended_mode: "lossless" | "transcode"; reason: string; lossless_expected_pct: number; transcode_expected_pct: number | null; duration_s?: number | null; codec?: string | null; };
 type JobResult = { archive_id: string; mode: "lossless" | "transcode"; orig_size: number; compressed_size: number; savings_pct: number; download_url: string; warning?: string; };
@@ -43,25 +44,10 @@ async function saveToDevice(url: string, filename: string, onProgress?: (loaded:
     document.body.appendChild(a); a.click(); document.body.removeChild(a); return true;
 }
 
-// NEW REDESIGNED SPINNER (No Loader.tsx needed)
-function Spinner({ text }: { text: string }) {
-    return (
-        <div className="flex flex-col items-center justify-center py-6 space-y-4">
-            <div className="relative flex items-center justify-center w-14 h-14">
-                {/* Dark Background Ring */}
-                <div className="absolute inset-0 rounded-full border-4 border-[#2d4a37]"></div>
-                {/* Bright Green Spinning Arc */}
-                <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#a3e635] border-r-[#a3e635] animate-spin" style={{ animationDuration: '1s' }}></div>
-            </div>
-            <p className="text-sm font-bold text-[#a3e635] tracking-widest uppercase animate-pulse">{text}</p>
-        </div>
-    );
-}
-
 function Home() {
     const [activeTab, setActiveTab] = useState<"compress" | "restore" | "watch">("compress");
 
-    // COMPRESS STATE
+    // Compress state
     const [file, setFile] = useState<File | null>(null);
     const [analysis, setAnalysis] = useState<Analysis | null>(null);
     const [analyzing, setAnalyzing] = useState(false);
@@ -76,18 +62,16 @@ function Home() {
     const [downloading, setDownloading] = useState(false);
     const [downloadPct, setDownloadPct] = useState(0);
 
-    // RESTORE STATE
+    // Restore state
     const [restoreFile, setRestoreFile] = useState<File | null>(null);
     const [restoring, setRestoring] = useState(false);
     const [restoreError, setRestoreError] = useState<string | null>(null);
 
-    // WATCH STATE
+    // Watch & Subtitle state
     const [watchFile, setWatchFile] = useState<File | null>(null);
     const [watching, setWatching] = useState(false);
     const [videoUrl, setVideoUrl] = useState<string | null>(null);
     const [watchError, setWatchError] = useState<string | null>(null);
-
-    // SUBTITLE STATE
     const [subtitleUrl, setSubtitleUrl] = useState<string | null>(null);
     const [transcribing, setTranscribing] = useState(false);
 
@@ -154,8 +138,7 @@ function Home() {
     }
 
     async function handleWatch() {
-        if (!watchFile) return;
-        setWatching(true); setWatchError(null); setVideoUrl(null); setSubtitleUrl(null);
+        if (!watchFile) return; setWatching(true); setWatchError(null); setVideoUrl(null); setSubtitleUrl(null);
         try {
             const fd = new FormData(); fd.append("file", watchFile);
             const r = await fetch(`${API}/api/v1/preview`, { method: "POST", body: fd });
@@ -219,7 +202,7 @@ function Home() {
                                 )}
                             </label>
 
-                            {analyzing && <Spinner text="Analyzing file" />}
+                            {analyzing && <Loader text="Analyzing file" />}
 
                             {analysis && (
                                 <div className="bg-[#1f3326] border border-[#2d4a37] rounded-xl p-4 space-y-4 shadow-sm">
@@ -263,7 +246,7 @@ function Home() {
 
                             {busy && (
                                 <div className="space-y-2">
-                                    <Spinner text={mode === "transcode" ? "Encoding AV1" : "Compressing"} />
+                                    <Loader text={mode === "transcode" ? "Encoding AV1" : "Compressing"} />
                                     <div className="w-full h-2.5 bg-[#0a1610] rounded-full overflow-hidden border border-[#2d4a37]">
                                         <div className="h-full bg-gradient-to-r from-[#4d7c0f] via-[#84cc16] to-[#a3e635] transition-all duration-300 rounded-full" style={{ width: `${progress}%` }} />
                                     </div>
@@ -291,9 +274,10 @@ function Home() {
                             <div className="mt-6 bg-[#152219]/50 border border-[#2d4a37] border-dashed rounded-2xl p-5 text-center">
                                 <h3 className="text-sm font-semibold text-[#e5eedb] mb-1">Need AV1 but using the free live web version?</h3>
                                 <p className="text-xs text-[#8fa896] mb-3 max-w-md mx-auto">Cloud servers don't have the CPU for heavy video encoding. Download the free open-source CLI to transcode videos on your own laptop.</p>
-                                <a href="https://github.com/iamthearafatkhan/akpack" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2d4a37] hover:bg-[#4d7c0f] text-white text-sm font-semibold transition-colors">
+                                {/* UPDATED LINK HERE */}
+                                <a href="https://github.com/iamthearafatkhan/akpack/releases/latest/download/AKPack-Tool.exe" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2d4a37] hover:bg-[#4d7c0f] text-white text-sm font-semibold transition-colors">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.9 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6A12 12 0 0 0 12 .3z" /></svg>
-                                    Download CLI via GitHub
+                                    Download CLI Tool (.exe)
                                 </a>
                             </div>
                         </div>
@@ -309,6 +293,7 @@ function Home() {
                             <button onClick={handleRestore} disabled={!restoreFile || restoring} className="w-full py-3.5 rounded-xl bg-[#84cc16] hover:bg-[#a3e635] disabled:bg-[#2d4a37] disabled:text-[#5a7565] text-[#0a1610] font-bold text-sm tracking-wide transition-all shadow-lg shadow-[#84cc16]/20">
                                 {restoring ? "Restoring..." : "Restore Original File"}
                             </button>
+                            {restoring && <Loader text="Restoring exact file..." />}
                             {restoreError && <div className="bg-[#2a0a0a] border border-[#7f1d1d] rounded-lg p-3"><p className="text-sm text-[#fca5a5] break-words">{restoreError}</p></div>}
                         </div>
                     )}
@@ -317,7 +302,7 @@ function Home() {
                         <div className="space-y-5">
                             <label className="block">
                                 <span className="text-xs uppercase tracking-wider text-[#8fa896] mb-2 block">Upload an .akp file to watch instantly</span>
-                                <input type="file" accept=".akp" onChange={e => { setWatchFile(e.target.files?.[0] ?? null); setVideoUrl(null); }} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
+                                <input type="file" accept=".akp" onChange={e => { setWatchFile(e.target.files?.[0] ?? null); setVideoUrl(null); setSubtitleUrl(null); }} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
                                 {watchFile && <span className="text-xs text-[#8fa896] mt-3 block"><span className="text-[#c8d6be] font-medium">{watchFile.name}</span> · {formatBytes(watchFile.size)}</span>}
                             </label>
 
@@ -327,12 +312,11 @@ function Home() {
 
                             {watchError && <div className="bg-[#2a0a0a] border border-[#7f1d1d] rounded-lg p-3"><p className="text-sm text-[#fca5a5] break-words">{watchError}</p></div>}
 
-                            {/* NEW INLINE SPINNER FOR WATCH TAB */}
-                            {watching && <Spinner text="Restoring video stream..." />}
+                            {watching && <Loader text="Restoring video stream..." />}
 
                             {videoUrl && (
                                 <div className="mt-4 rounded-xl overflow-hidden border border-[#2d4a37] bg-black shadow-lg relative group">
-                                    <video src={videoUrl} controls autoPlay crossOrigin="anonymous" className="w-full max-h-[600px] object-contain">
+                                    <video src={videoUrl} controls autoPlay className="w-full max-h-[600px] object-contain" crossOrigin="anonymous">
                                         {subtitleUrl && (
                                             <track kind="subtitles" src={subtitleUrl} srcLang="en" label="English" default />
                                         )}
@@ -344,7 +328,7 @@ function Home() {
                                             disabled={transcribing}
                                             className="px-3 py-1.5 bg-black/70 hover:bg-black text-white text-xs font-medium rounded-lg border border-white/20 backdrop-blur-sm flex items-center gap-2 disabled:opacity-50"
                                         >
-                                            <span>✨</span> {transcribing ? "Transcribing..." : "Generate AI Subtitles"}
+                                            {transcribing ? "Transcribing..." : "✨ Generate AI Subtitles"}
                                         </button>
                                     </div>
                                 </div>
