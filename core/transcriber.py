@@ -63,18 +63,27 @@ def generate_subtitles(audio_path: str, output_vtt: str, language: str = "auto")
     if file_size_mb > 24:
         raise Exception("Audio chunk too large. Please split into smaller files.")
 
+    groq_error = ""
+    hf_error = ""
+
     try:
         logger.info("Attempting Groq API...")
         vtt = transcribe_groq(audio_path, language)
         method_used = "Groq API (Fast)"
     except Exception as e:
-        logger.warning(f"Groq failed: {e}. Trying Hugging Face...")
+        groq_error = str(e)
+        logger.error(f"Groq failed: {groq_error}")
+        
         try:
+            logger.info("Attempting Hugging Face API...")
             vtt = transcribe_huggingface(audio_path)
             method_used = "Hugging Face API"
         except Exception as e2:
-            logger.error(f"HF failed: {e2}.")
-            raise Exception("Both Groq and Hugging Face failed. Please check your API keys on Render.")
+            hf_error = str(e2)
+            logger.error(f"HF failed: {hf_error}")
+            
+            # This will show the real errors on your frontend
+            raise Exception(f"Groq Error: {groq_error} | HF Error: {hf_error}")
 
     with open(output_vtt, "w", encoding="utf-8") as f:
         f.write(vtt)
