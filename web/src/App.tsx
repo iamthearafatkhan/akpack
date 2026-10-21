@@ -6,10 +6,11 @@ import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import FAQ from "./pages/FAQ";
 import Privacy from "./pages/Privacy";
+import Terms from './pages/Terms';
 import Loader from "./components/Loader";
 import { decodeAkpInBrowser } from "./lib/akpBrowserDecoder";
-
 import { extractAudioChunks } from "./lib/audioExtractor";
+
 type Analysis = { category: string; recommended_mode: "lossless" | "transcode"; reason: string; lossless_expected_pct: number; transcode_expected_pct: number | null; duration_s?: number | null; codec?: string | null; };
 type JobResult = { archive_id: string; mode: "lossless" | "transcode"; orig_size: number; compressed_size: number; savings_pct: number; download_url: string; warning?: string; };
 
@@ -49,7 +50,6 @@ async function saveToDevice(url: string, filename: string, onProgress?: (loaded:
 function Home() {
     const [activeTab, setActiveTab] = useState<"compress" | "restore" | "watch">("compress");
 
-    // Compress state
     const [file, setFile] = useState<File | null>(null);
     const [analysis, setAnalysis] = useState<Analysis | null>(null);
     const [analyzing, setAnalyzing] = useState(false);
@@ -64,12 +64,10 @@ function Home() {
     const [downloading, setDownloading] = useState(false);
     const [downloadPct, setDownloadPct] = useState(0);
 
-    // Restore state
     const [restoreFile, setRestoreFile] = useState<File | null>(null);
     const [restoring, setRestoring] = useState(false);
     const [restoreError, setRestoreError] = useState<string | null>(null);
 
-    // Watch & Subtitle state
     const [watchFile, setWatchFile] = useState<File | null>(null);
     const [watching, setWatching] = useState(false);
     const [watchProgress, setWatchProgress] = useState(0);
@@ -77,9 +75,9 @@ function Home() {
     const [videoUrl, setVideoUrl] = useState<string | null>(null);
     const [watchError, setWatchError] = useState<string | null>(null);
 
-    // Subtitle specific state
     const [subtitleUrl, setSubtitleUrl] = useState<string | null>(null);
     const [transcribing, setTranscribing] = useState(false);
+    const [transcribePct, setTranscribePct] = useState(0);
     const [subtitleLang, setSubtitleLang] = useState("auto");
 
     useEffect(() => {
@@ -159,19 +157,19 @@ function Home() {
         }
     }
 
-    // Inside App.tsx
-
-
     async function handleTranscribe() {
         if (!videoBlob) return;
         setTranscribing(true);
+        setTranscribePct(0);
         try {
-            // 1. Extract audio in 5-minute chunks
+            // 1. Wake up Render backend (fixes cold-start timeout)
+            await fetch(`${API}/health`).catch(() => { });
+
+            // 2. Extract audio chunks (5 mins per chunk)
             const chunks = await extractAudioChunks(videoBlob, 5);
             let finalVtt = "WEBVTT\n\n";
             let timeOffset = 0;
 
-            // 2. Send chunks one by one
             for (let i = 0; i < chunks.length; i++) {
                 const fd = new FormData();
                 fd.append("file", chunks[i], `chunk_${i}.wav`);
@@ -179,10 +177,8 @@ function Home() {
 
                 const r = await fetch(`${API}/api/v1/transcribe`, { method: "POST", body: fd });
                 if (!r.ok) throw new Error(await r.text());
-
                 const data = await r.json();
 
-                // 3. Offset timestamps for chunks after the first one
                 if (timeOffset > 0) {
                     const lines = data.vtt_content.split('\n');
                     for (let line of lines) {
@@ -201,13 +197,12 @@ function Home() {
                 } else {
                     finalVtt += data.vtt_content.replace("WEBVTT\n\n", "");
                 }
-                timeOffset += 300; // Add 5 minutes (300 seconds)
+                timeOffset += 300;
+                setTranscribePct(Math.round(((i + 1) / chunks.length) * 100));
             }
 
-            // 4. Create Blob URL for the final stitched VTT
             const vttBlob = new Blob([finalVtt], { type: "text/vtt" });
             setSubtitleUrl(URL.createObjectURL(vttBlob));
-
         } catch (e: any) {
             alert("Subtitle generation failed: " + e.message);
         } finally {
@@ -240,7 +235,6 @@ function Home() {
 
                 <div className="max-w-2xl mx-auto bg-[#152219] border border-[#2d4a37] rounded-2xl p-6 shadow-xl shadow-black/30 transition-colors">
 
-                    {/* ... [Compress tab unchanged] ... */}
                     {activeTab === "compress" && (
                         <div className="space-y-5">
                             <label className="block">
@@ -334,7 +328,6 @@ function Home() {
                         </div>
                     )}
 
-                    {/* ... [Restore tab unchanged] ... */}
                     {activeTab === "restore" && (
                         <div className="space-y-5">
                             <label className="block">
@@ -350,7 +343,6 @@ function Home() {
                         </div>
                     )}
 
-                    {/* ... [Watch tab with updated Language Dropdown] ... */}
                     {activeTab === "watch" && (
                         <div className="space-y-5">
                             <label className="block">
@@ -381,7 +373,6 @@ function Home() {
                                         )}
                                     </video>
 
-                                    {/* Subtitle Controls inside the Video Player area */}
                                     <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <select
                                             value={subtitleLang}
@@ -403,7 +394,7 @@ function Home() {
                                             disabled={transcribing}
                                             className="px-3 py-1.5 bg-black/70 hover:bg-black text-white text-xs font-medium rounded-lg border border-white/20 backdrop-blur-sm flex items-center gap-2 disabled:opacity-50"
                                         >
-                                            {transcribing ? "Generating..." : "✨ Generate AI Subtitles"}
+                                            {transcribing ? `Generating... ${transcribePct}%` : "✨ Generate AI Subtitles"}
                                         </button>
                                     </div>
                                 </div>
@@ -424,6 +415,7 @@ export default function App() {
             <Route path="/" element={<Home />} />
             <Route path="/faq" element={<FAQ />} />
             <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
         </Routes>
     );
 }
