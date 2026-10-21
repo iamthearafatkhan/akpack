@@ -9,7 +9,7 @@ import Privacy from "./pages/Privacy";
 import Terms from './pages/Terms';
 import Loader from "./components/Loader";
 import { decodeAkpInBrowser } from "./lib/akpBrowserDecoder";
-import { extractAudioChunks } from "./lib/audioExtractor";
+import { convertSrtToVtt } from "./lib/subtitleConverter";
 
 type Analysis = { category: string; recommended_mode: "lossless" | "transcode"; reason: string; lossless_expected_pct: number; transcode_expected_pct: number | null; duration_s?: number | null; codec?: string | null; };
 type JobResult = { archive_id: string; mode: "lossless" | "transcode"; orig_size: number; compressed_size: number; savings_pct: number; download_url: string; warning?: string; };
@@ -50,6 +50,7 @@ async function saveToDevice(url: string, filename: string, onProgress?: (loaded:
 function Home() {
     const [activeTab, setActiveTab] = useState<"compress" | "restore" | "watch">("compress");
 
+    // Compress state
     const [file, setFile] = useState<File | null>(null);
     const [analysis, setAnalysis] = useState<Analysis | null>(null);
     const [analyzing, setAnalyzing] = useState(false);
@@ -64,22 +65,18 @@ function Home() {
     const [downloading, setDownloading] = useState(false);
     const [downloadPct, setDownloadPct] = useState(0);
 
+    // Restore state
     const [restoreFile, setRestoreFile] = useState<File | null>(null);
     const [restoring, setRestoring] = useState(false);
     const [restoreError, setRestoreError] = useState<string | null>(null);
 
+    // Watch state
     const [watchFile, setWatchFile] = useState<File | null>(null);
     const [watching, setWatching] = useState(false);
     const [watchProgress, setWatchProgress] = useState(0);
-    const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
     const [videoUrl, setVideoUrl] = useState<string | null>(null);
     const [watchError, setWatchError] = useState<string | null>(null);
-
     const [subtitleUrl, setSubtitleUrl] = useState<string | null>(null);
-    const [transcribing, setTranscribing] = useState(false);
-    const [transcribePct, setTranscribePct] = useState(0);
-    const [subtitleLang, setSubtitleLang] = useState("auto");
-    const [wakeStatus, setWakeStatus] = useState("");
 
     useEffect(() => {
         fetch(`${API}/health`).then(r => r.json()).then(h => setFfmpegAvailable(h.ffmpeg === true)).catch(() => setFfmpegAvailable(false));
@@ -145,11 +142,10 @@ function Home() {
 
     async function handleWatch() {
         if (!watchFile) return;
-        setWatching(true); setWatchError(null); setVideoUrl(null); setVideoBlob(null); setSubtitleUrl(null); setWatchProgress(0);
+        setWatching(true); setWatchError(null); setVideoUrl(null); setSubtitleUrl(null); setWatchProgress(0);
 
         try {
             const decodedBlob = await decodeAkpInBrowser(watchFile, (pct) => setWatchProgress(pct));
-            setVideoBlob(decodedBlob);
             setVideoUrl(URL.createObjectURL(decodedBlob));
         } catch (e: any) {
             setWatchError(e.message || "Failed to decode video in browser.");
@@ -158,80 +154,22 @@ function Home() {
         }
     }
 
-    async function handleTranscribe() {
-        if (!videoBlob) return;
-        setTranscribing(true);
-        setTranscribePct(0);
-        setWakeStatus("");
+    async function handleSubtitleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+        const subFile = e.target.files?.[0];
+        if (!subFile) return;
 
         try {
-            // --- WAKE UP RENDER SERVER ---
-            let serverAwake = false;
-            let attempts = 0;
-            while (!serverAwake && attempts < 24) { // 24 attempts * 5s = 2 minutes max
-                try {
-                    const ping = await fetch(`${API}/health`, { method: 'GET' });
-                    if (ping.ok) {
-                        serverAwake = true;
-                        break;
-                    }
-                } catch (e) {
-                    // Ignore and retry
-                }
-                attempts++;
-                setWakeStatus(`Waking up server... (${attempts * 5}s)`);
-                await new Promise(res => setTimeout(res, 5000));
+            const text = await subFile.text();
+            let vttContent = text;
+
+            if (subFile.name.toLowerCase().endsWith('.srt')) {
+                vttContent = convertSrtToVtt(text);
             }
 
-            if (!serverAwake) throw new Error("Server is taking too long to wake up. Please try again in a minute.");
-            setWakeStatus("Extracting audio chunks...");
-
-            // --- EXTRACT AUDIO ---
-            const chunks = await extractAudioChunks(videoBlob, 5);
-            let finalVtt = "WEBVTT\n\n";
-            let timeOffset = 0;
-
-            for (let i = 0; i < chunks.length; i++) {
-                setWakeStatus(`Transcribing chunk ${i + 1} of ${chunks.length}...`);
-
-                const fd = new FormData();
-                fd.append("file", chunks[i], `chunk_${i}.wav`);
-                fd.append("language", subtitleLang);
-
-                const r = await fetch(`${API}/api/v1/transcribe`, { method: "POST", body: fd });
-                if (!r.ok) throw new Error(await r.text());
-                const data = await r.json();
-
-                if (timeOffset > 0) {
-                    const lines = data.vtt_content.split('\n');
-                    for (let line of lines) {
-                        if (line.includes('-->')) {
-                            const [start, end] = line.split(' --> ');
-                            const shiftTime = (timeStr: string) => {
-                                const parts = timeStr.replace(',', '.').split(':');
-                                const secs = parseFloat(parts[2]) + parseInt(parts[1]) * 60 + timeOffset;
-                                return `${String(Math.floor(secs / 3600)).padStart(2, '0')}:${String(Math.floor((secs % 3600) / 60)).padStart(2, '0')}:${String(Math.floor(secs % 60)).padStart(2, '0')}.${String(Math.floor((secs % 1) * 1000)).padStart(3, '0')}`;
-                            };
-                            finalVtt += `${shiftTime(start)} --> ${shiftTime(end)}\n`;
-                        } else if (line.trim() !== "" && line !== "WEBVTT") {
-                            finalVtt += `${line}\n`;
-                        }
-                    }
-                } else {
-                    finalVtt += data.vtt_content.replace("WEBVTT\n\n", "");
-                }
-                timeOffset += 300;
-                setTranscribePct(Math.round(((i + 1) / chunks.length) * 100));
-            }
-
-            const vttBlob = new Blob([finalVtt], { type: "text/vtt" });
+            const vttBlob = new Blob([vttContent], { type: "text/vtt" });
             setSubtitleUrl(URL.createObjectURL(vttBlob));
-            setWakeStatus("");
-        } catch (e: any) {
-            alert("Subtitle generation failed: " + e.message);
-            setWakeStatus("");
-        } finally {
-            setTranscribing(false);
+        } catch (err) {
+            alert("Failed to load subtitle file.");
         }
     }
 
@@ -372,7 +310,7 @@ function Home() {
                         <div className="space-y-5">
                             <label className="block">
                                 <span className="text-xs uppercase tracking-wider text-[#8fa896] mb-2 block">Upload an .akp file to watch instantly</span>
-                                <input type="file" accept=".akp" onChange={e => { setWatchFile(e.target.files?.[0] ?? null); setVideoUrl(null); setSubtitleUrl(null); setVideoBlob(null); }} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
+                                <input type="file" accept=".akp" onChange={e => { setWatchFile(e.target.files?.[0] ?? null); setVideoUrl(null); setSubtitleUrl(null); }} className="block w-full text-sm text-[#c8d6be] file:mr-3 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-[#4d7c0f] file:text-white file:font-medium file:cursor-pointer hover:file:bg-[#65a30d] file:transition-colors" />
                                 {watchFile && <span className="text-xs text-[#8fa896] mt-3 block"><span className="text-[#c8d6be] font-medium">{watchFile.name}</span> · {formatBytes(watchFile.size)}</span>}
                             </label>
 
@@ -391,42 +329,29 @@ function Home() {
                             )}
 
                             {videoUrl && (
-                                <div className="mt-4 rounded-xl overflow-hidden border border-[#2d4a37] bg-black shadow-lg relative group">
-                                    <video src={videoUrl} controls autoPlay className="w-full max-h-[600px] object-contain" crossOrigin="anonymous">
-                                        {subtitleUrl && (
-                                            <track kind="subtitles" src={subtitleUrl} srcLang="en" label="Subtitles" default />
-                                        )}
-                                    </video>
-
-                                    <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <select
-                                            value={subtitleLang}
-                                            onChange={e => setSubtitleLang(e.target.value)}
-                                            className="bg-black/70 text-white text-xs border border-white/20 rounded-lg px-2 py-1.5 backdrop-blur-sm outline-none cursor-pointer"
-                                        >
-                                            <option value="auto">Auto-Detect Language</option>
-                                            <option value="en">English</option>
-                                            <option value="es">Spanish</option>
-                                            <option value="fr">French</option>
-                                            <option value="hi">Hindi</option>
-                                            <option value="bn">Bengali</option>
-                                            <option value="id">Indonesian</option>
-                                            <option value="ar">Arabic</option>
-                                        </select>
-
-                                        <button
-                                            onClick={handleTranscribe}
-                                            disabled={transcribing}
-                                            className="px-3 py-1.5 bg-black/70 hover:bg-black text-white text-xs font-medium rounded-lg border border-white/20 backdrop-blur-sm flex items-center gap-2 disabled:opacity-50"
-                                        >
-                                            {transcribing ? `Generating... ${transcribePct}%` : "✨ Generate AI Subtitles"}
-                                        </button>
+                                <div className="space-y-4 mt-4">
+                                    {/* Subtitle Upload Area */}
+                                    <div className="bg-[#1f3326] border border-[#2d4a37] rounded-xl p-4 flex items-center justify-between">
+                                        <div>
+                                            <h3 className="text-sm font-semibold text-[#e5eedb]">Subtitles</h3>
+                                            <p className="text-xs text-[#8fa896]">Upload a .srt or .vtt file to display on the video.</p>
+                                        </div>
+                                        <label className="cursor-pointer bg-[#4d7c0f] hover:bg-[#65a30d] text-white text-xs font-semibold py-2 px-4 rounded-lg transition-colors">
+                                            Upload File
+                                            <input type="file" accept=".srt,.vtt" onChange={handleSubtitleUpload} className="hidden" />
+                                        </label>
                                     </div>
 
-                                    {wakeStatus && (
-                                        <div className="absolute bottom-4 left-4 right-4 bg-black/80 text-white text-xs p-2 rounded-lg text-center backdrop-blur-sm border border-white/20">
-                                            {wakeStatus}
-                                        </div>
+                                    {/* Video Player with Native Fullscreen Subtitles */}
+                                    <div className="rounded-xl overflow-hidden border border-[#2d4a37] bg-black shadow-lg">
+                                        <video src={videoUrl} controls autoPlay className="w-full max-h-[600px] object-contain" crossOrigin="anonymous">
+                                            {subtitleUrl && (
+                                                <track kind="subtitles" src={subtitleUrl} srcLang="en" label="English" default />
+                                            )}
+                                        </video>
+                                    </div>
+                                    {subtitleUrl && (
+                                        <p className="text-xs text-[#a3e635] text-center">Subtitle loaded! Click the fullscreen button on the video to watch.</p>
                                     )}
                                 </div>
                             )}
