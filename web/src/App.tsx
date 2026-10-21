@@ -8,8 +8,8 @@ import FAQ from "./pages/FAQ";
 import Privacy from "./pages/Privacy";
 import Loader from "./components/Loader";
 import { decodeAkpInBrowser } from "./lib/akpBrowserDecoder";
-import { extractAudioFromVideo } from "./lib/audioExtractor";
 
+import { extractAudioChunks } from "./lib/audioExtractor";
 type Analysis = { category: string; recommended_mode: "lossless" | "transcode"; reason: string; lossless_expected_pct: number; transcode_expected_pct: number | null; duration_s?: number | null; codec?: string | null; };
 type JobResult = { archive_id: string; mode: "lossless" | "transcode"; orig_size: number; compressed_size: number; savings_pct: number; download_url: string; warning?: string; };
 
@@ -159,25 +159,53 @@ function Home() {
         }
     }
 
+    // Inside App.tsx
+
+
     async function handleTranscribe() {
         if (!videoBlob) return;
         setTranscribing(true);
         try {
-            // 1. Extract audio in the browser to a tiny WAV file
-            const audioBlob = await extractAudioFromVideo(videoBlob);
+            // 1. Extract audio in 5-minute chunks
+            const chunks = await extractAudioChunks(videoBlob, 5);
+            let finalVtt = "WEBVTT\n\n";
+            let timeOffset = 0;
 
-            // 2. Send audio to backend
-            const fd = new FormData();
-            fd.append("file", audioBlob, "audio.wav");
-            fd.append("language", subtitleLang);
+            // 2. Send chunks one by one
+            for (let i = 0; i < chunks.length; i++) {
+                const fd = new FormData();
+                fd.append("file", chunks[i], `chunk_${i}.wav`);
+                fd.append("language", subtitleLang);
 
-            const r = await fetch(`${API}/api/v1/transcribe`, { method: "POST", body: fd });
-            if (!r.ok) throw new Error(await r.text());
+                const r = await fetch(`${API}/api/v1/transcribe`, { method: "POST", body: fd });
+                if (!r.ok) throw new Error(await r.text());
 
-            const data = await r.json();
+                const data = await r.json();
 
-            // 3. Convert VTT text to a Blob URL for the <track>
-            const vttBlob = new Blob([data.vtt_content], { type: "text/vtt" });
+                // 3. Offset timestamps for chunks after the first one
+                if (timeOffset > 0) {
+                    const lines = data.vtt_content.split('\n');
+                    for (let line of lines) {
+                        if (line.includes('-->')) {
+                            const [start, end] = line.split(' --> ');
+                            const shiftTime = (timeStr: string) => {
+                                const parts = timeStr.replace(',', '.').split(':');
+                                const secs = parseFloat(parts[2]) + parseInt(parts[1]) * 60 + timeOffset;
+                                return `${String(Math.floor(secs / 3600)).padStart(2, '0')}:${String(Math.floor((secs % 3600) / 60)).padStart(2, '0')}:${String(Math.floor(secs % 60)).padStart(2, '0')}.${String(Math.floor((secs % 1) * 1000)).padStart(3, '0')}`;
+                            };
+                            finalVtt += `${shiftTime(start)} --> ${shiftTime(end)}\n`;
+                        } else if (line.trim() !== "" && line !== "WEBVTT") {
+                            finalVtt += `${line}\n`;
+                        }
+                    }
+                } else {
+                    finalVtt += data.vtt_content.replace("WEBVTT\n\n", "");
+                }
+                timeOffset += 300; // Add 5 minutes (300 seconds)
+            }
+
+            // 4. Create Blob URL for the final stitched VTT
+            const vttBlob = new Blob([finalVtt], { type: "text/vtt" });
             setSubtitleUrl(URL.createObjectURL(vttBlob));
 
         } catch (e: any) {
