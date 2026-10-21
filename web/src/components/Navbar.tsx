@@ -17,6 +17,7 @@ export default function Navbar() {
                     <Link to="/" className={`hover:text-[#a3e635] transition-colors ${location.pathname === "/" ? "text-[#a3e635]" : ""}`}>Home</Link>
                     <Link to="/faq" className={`hover:text-[#a3e635] transition-colors ${location.pathname === "/faq" ? "text-[#a3e635]" : ""}`}>FAQ</Link>
                     <Link to="/privacy" className={`hover:text-[#a3e635] transition-colors ${location.pathname === "/privacy" ? "text-[#a3e635]" : ""}`}>Privacy</Link>
+                    <Link to="/terms" className={`hover:text-[#a3e635] transition-colors ${location.pathname === "/terms" ? "text-[#a3e635]" : ""}`}>Terms</Link>
                 </div>
             </div>
         </nav>
