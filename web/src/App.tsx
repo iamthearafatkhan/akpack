@@ -280,12 +280,20 @@ function Home() {
                                 </div>
                             )}
 
-                            <div className="mt-6 bg-[#152219]/50 border border-[#2d4a37] border-dashed rounded-2xl p-5 text-center">
-                                <h3 className="text-sm font-semibold text-[#e5eedb] mb-1">Need AV1 but using the free live web version?</h3>
-                                <p className="text-xs text-[#8fa896] mb-3 max-w-md mx-auto">Cloud servers don't have the CPU for heavy video encoding. Download the free open-source CLI to transcode videos on your own laptop.</p>
-                                <a href="https://github.com/iamthearafatkhan/akpack/releases/latest/download/AKPack-Tool.exe" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2d4a37] hover:bg-[#4d7c0f] text-white text-sm font-semibold transition-colors">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.9 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6A12 12 0 0 0 12 .3z" /></svg>
-                                    Download CLI Tool (.exe)
+                            {/* --- UPDATED DOWNLOAD CARD --- */}
+                            <div className="mt-6 bg-[#152219]/50 border border-[#2d4a37] border-dashed rounded-2xl p-5 text-center flex flex-col items-center">
+                                <h3 className="text-sm font-semibold text-[#e5eedb] mb-1">Get AKPack Studio (Desktop App)</h3>
+                                <p className="text-xs text-[#8fa896] mb-4 max-w-md mx-auto">
+                                    Watch `.akp` videos locally, compress files, and transcode to AV1. Includes embedded subtitle support, 4K playback, and a modern UI.
+                                </p>
+                                <a
+                                    href="https://github.com/iamthearafatkhan/akpack/releases/latest/download/AKPack-Studio.exe"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-[#4d7c0f] hover:bg-[#65a30d] text-white text-sm font-bold transition-all shadow-lg shadow-[#4d7c0f]/20"
+                                >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.9 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6A12 12 0 0 0 12 .3z" /></svg>
+                                    Download AKPack Studio (.exe)
                                 </a>
                             </div>
                         </div>
