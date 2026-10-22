@@ -48,6 +48,9 @@ akp compress my_video.mp4 my_video.mp4.akp
 # Restore a file
 akp restore my_video.mp4.akp my_video_restored.mp4
 ```
+
+Download AKPack-cli: https://pypi.org/project/akpack-cli/
+
 ### 2. Download AKPack Studio (Windows End-Users)
 Skip the terminal and get the ultimate offline experience:
 
