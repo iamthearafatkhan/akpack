@@ -5,6 +5,7 @@
 ### Honest Compression. Exact Restoration. Studio-Grade Playback.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#license)
+[![PyPI version](https://img.shields.io/pypi/v/akpack-cli.svg)](https://pypi.org/project/akpack-cli/)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](https://www.python.org/)
 [![React 18](https://img.shields.io/badge/React-18-61DAFB)](https://reactjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
@@ -29,29 +30,46 @@ Sending large files (videos, datasets, backups) is painful. You either lose qual
 | **AV1 Transcoding** | Re-encodes H.264/H.265 videos to AV1, saving up to 60% in size with near-identical visual quality. |
 | **Browser Playback** | Watch restored `.akp` videos instantly on the web using WebAssembly (WASM). No server uploads required for playback. |
 | **AKPack Studio** | A standalone desktop media player with native subtitle support, 4K hardware acceleration, and built-in compression tools. |
-| **Manual Subtitles** | Upload `.srt` or `.vtt` files on the web, or automatically read multiple embedded subtitle tracks in the Desktop App. |
-
+| **CLI Tool** | A powerful command-line interface available on PyPI for developers and automation. |
 ---
 
 ## 🚀 Download & Quick Start
 
-### 1. Download AKPack Studio (Windows)
-Skip the browser and get the ultimate offline experience:
-* **[Download AKPack-Studio.exe](https://github.com/iamthearafatkhan/akpack/releases/latest/download/AKPack-Studio.exe)**
-* Watch `.akp` files, MP4s, MKVs, and WEBMs.
-* Supports multiple embedded subtitle tracks.
-* Includes Lossless and AV1 compression tools.
-* 200% volume boost and hardware acceleration for 4K.
+### 1. Install the CLI (Python Developers)
+You can install the AKPack command-line tool directly from PyPI:
+```bash
+pip install akpack-cli
+```
+Once installed, you can compress and restore files from your terminal:
+```bash
+# Compress a file
+akp compress my_video.mp4 my_video.mp4.akp
 
-### 2. Run Locally (Web)
+# Restore a file
+akp restore my_video.mp4.akp my_video_restored.mp4
+```
+### 2. Download AKPack Studio (Windows End-Users)
+Skip the terminal and get the ultimate offline experience:
 
-**Backend:**
+Download AKPack-Studio.exe
+
+Watch .akp files, MP4s, MKVs, and WEBMs.
+
+Supports multiple embedded subtitle tracks.
+
+Includes Lossless and AV1 compression tools.
+
+200% volume boost and hardware acceleration for 4K.
+
+
+### 3. Run the Web Platform Locally
+Backend:
 ```bash
 pip install -e ".[server,dev]"
 uvicorn server.main:app --reload --port 8000
 ```
 
-### 2. Frontend Setup
+Frontend:
 ```bash
 cd web
 npm install
