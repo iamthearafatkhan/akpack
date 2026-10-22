@@ -9,7 +9,8 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](https://www.python.org/)
 [![React 18](https://img.shields.io/badge/React-18-61DAFB)](https://reactjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
-[![Website](https://shields.io)](https://akpack-tool.pages.dev/)
+[![Website](https://shields.io)]([https://pages.dev](https://akpack-tool.pages.dev/))
+
 
 
 </div>
