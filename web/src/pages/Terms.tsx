@@ -12,10 +12,10 @@ export default function Terms() {
                     <p><strong>Last updated: October 2026</strong></p>
 
                     <h2 className="text-lg font-semibold text-[#e5eedb] mt-6 mb-2">1. Acceptance of Terms</h2>
-                    <p>By accessing or using AKPack (the "Service"), you agree to be bound by these Terms. If you do not agree to these Terms, you may not use the Service.</p>
+                    <p>By accessing or using AKPack (the "Service"), including the web platform and the AKPack Studio desktop application, you agree to be bound by these Terms. If you do not agree to these Terms, you may not use the Service.</p>
 
                     <h2 className="text-lg font-semibold text-[#e5eedb] mt-6 mb-2">2. Nature of the Service (Local Processing)</h2>
-                    <p>AKPack is a client-side, local-processing utility. When you use the "Watch" or "Restore" features, the `.akp` archive is decompressed and decoded entirely within your web browser using WebAssembly (WASM). <strong>We do not upload, host, store, or transmit the decoded contents of your video or data files to our servers.</strong></p>
+                    <p>AKPack is primarily a client-side, local-processing utility. When you use the "Watch" feature on the web, or any feature in the Desktop App, the `.akp` archive is decompressed and decoded entirely on your local device. <strong>We do not upload, host, store, or transmit the decoded contents of your video or data files to our servers.</strong></p>
 
                     <h2 className="text-lg font-semibold text-[#e5eedb] mt-6 mb-2">3. Acceptable Use & User Responsibility</h2>
                     <p>You agree to use AKPack only for lawful purposes. You are solely responsible for ensuring that you have the legal right to process, compress, or view any file you use with this Service.</p>
